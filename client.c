@@ -24,8 +24,6 @@ char req[100];
 char res[100];
 
 struct sockaddr_in s_addr;
-struct sockaddr_in cl_addr;
-struct sockaddr_in from_addr;
 
 void sig_handler(int sig) {
 	char msg[] = "alarm::socket didn\'t get any response\n";
@@ -41,28 +39,36 @@ int main() {
 	if(!inet_aton(HOST, &s_addr.sin_addr)) {
 		handle_error("invalid address");
 	}
-	cl_addr.sin_family = FAM;
 
 	int sd = socket(FAM, SOCK, 0);
 	if(sd == -1) {
 		handle_error("socket");
+	} else {
+		printf("connection with %s:%d established\n", HOST, PORT);
+		printf("you can start chatting\n");
+		sendto(sd, " ", 1, 0, (struct sockaddr*)&s_addr, sizeof(s_addr));
 	}
 
 	int i = 0;
 	do {
+		alarm(60);
+		if(fork() == 0) {
+			int i = 0;
+			do {
+				recvfrom(sd, res, sizeof(res), 0, NULL, 0);
+				printf("\t%s", res);
+				i++;
+			} while(i < 100);
+
+			exit(0);
+		}
 		bzero(req, 100);
-		write(1, "> ", 2);
 		read(0, req, sizeof(req));
 
 		int s = sendto(sd, req, sizeof(req), 0, (struct sockaddr*)&s_addr, sizeof(s_addr));
 		if(s == -1) {
 			handle_error("send");
 		}
-		// Создать fork для асинхронного получения ответов
-		alarm(60);
-		socklen_t from_addrlen = sizeof(from_addr);
-		recvfrom(sd, res, sizeof(res), 0, (struct sockaddr*)&from_addr, &from_addrlen);
-		write(1, res, 100);
 
 		i++;
 	} while(i < 100);

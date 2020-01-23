@@ -26,7 +26,7 @@ char income[100];
 struct sockaddr_in addr;
 struct sockaddr_in to_addr;
 
-int add_to_Clients(int, struct sockaddr_in*, struct sockaddr_in);
+int add_to_Clients(struct sockaddr_in*, struct sockaddr_in);
 
 void send_to_Clients(int, struct sockaddr_in*, struct sockaddr_in, int socket, socklen_t addrlen);
 
@@ -60,6 +60,10 @@ int main() {
 	int bnd = bind(sd, (struct sockaddr*)&addr, sizeof(addr));
 	if(bnd == -1) {
 		handle_error("bind");
+	} else {
+		const char message[] = 
+			"Server is working...\nYou can start chatting!\n------------------\n\n";
+		write(1, message, sizeof(message));
 	}
 
 	int i = 0;
@@ -70,7 +74,10 @@ int main() {
 		socklen_t to_addrlen = sizeof(to_addr);
 		recvfrom(sd, income, sizeof(income), 0, (struct sockaddr*)&to_addr, &to_addrlen);
 		
-		if(add_to_Clients(i, Clients, to_addr)) Clients[i] = to_addr;
+		if(i == 0) Clients[i] = to_addr; // Клиента с первым сообщением добавляем сразу
+
+		int k = 0;
+		if((k = add_to_Clients(Clients, to_addr)) <= 10) Clients[k] = to_addr;
 
 		send_to_Clients(i, Clients, to_addr, sd, to_addrlen);
 
@@ -82,14 +89,16 @@ int main() {
 	return 0;
 }
 
-int add_to_Clients(int index, struct sockaddr_in *Clients, struct sockaddr_in to_addr) {
-	int j = 0;
-	for(;j <= index; j++) {
-		if(Clients[j].sin_port == to_addr.sin_port) {
-			return 0;
+int add_to_Clients(struct sockaddr_in *Clients, struct sockaddr_in to_addr) {
+	int k = 0;
+	for(;k <= 10; k++) {
+		if(Clients[k].sin_port == to_addr.sin_port) {
+			return 11;
+		} else if (!Clients[k].sin_port) {
+			return k;
 		}
 	}
-	return 1;
+	return 11; // Массив полон, клиентов добавлять нельзя
 }
 
 void send_to_Clients(int index, struct sockaddr_in *Clients, struct sockaddr_in to_addr, int sd, socklen_t to_addrlen) {
