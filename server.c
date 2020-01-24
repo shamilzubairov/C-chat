@@ -20,19 +20,21 @@ do { \
 
 enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
 
-char message[] = "Hello Mr. Client\n";
 char income[100];
+int total_clients = 10;
+int total_messages = 100;
 
 struct sockaddr_in addr;
 struct sockaddr_in to_addr;
 
-int add_to_Clients(struct sockaddr_in*, struct sockaddr_in);
+struct sockaddr_in Clients[10]; // Храним максимум 10 подключенных
 
-void send_to_Clients(int, struct sockaddr_in*, struct sockaddr_in, int socket, socklen_t addrlen);
+void send_to_Clients(struct sockaddr_in *, struct sockaddr_in, int socket, socklen_t);
+
+void printraw(const char *);
 
 void sig_handler(int sig) {
-	char msg[] = "alarm::server didn\'t get any message\n";
-	write(1, msg, sizeof(msg));
+	printraw("alarm::server didn\'t get any message\n");
 	exit(1);
 }
 
@@ -61,52 +63,51 @@ int main() {
 	if(bnd == -1) {
 		handle_error("bind");
 	} else {
-		const char message[] = 
-			"Server is working...\nYou can start chatting!\n------------------\n\n";
-		write(1, message, sizeof(message));
+		printraw("Server is working...\n------------------\n\n");
 	}
 
-	int i = 0;
-	struct sockaddr_in Clients[10]; // Храним максимум 10 подключенных
 	bzero(Clients, sizeof(Clients));
+
+	int circle = 0;
 	do {
-		alarm(60);
+		alarm(20);
 		socklen_t to_addrlen = sizeof(to_addr);
 		recvfrom(sd, income, sizeof(income), 0, (struct sockaddr*)&to_addr, &to_addrlen);
 		
-		if(i == 0) Clients[i] = to_addr; // Клиента с первым сообщением добавляем сразу
-
-		int k = 0;
-		if((k = add_to_Clients(Clients, to_addr)) <= 10) Clients[k] = to_addr;
-
-		send_to_Clients(i, Clients, to_addr, sd, to_addrlen);
+		if(!strncmp(income, "LOGIN::", 7)) {
+			static int count = 0;
+			Clients[count] = to_addr; // Клиента добавляем в массив
+			// Отправляем контрольный бит
+			sendto(sd, "1", 1, 0, (struct sockaddr*)&to_addr, to_addrlen);
+			count++;
+			continue;
+		}
+		send_to_Clients(Clients, to_addr, sd, to_addrlen);
 
 		bzero(income, sizeof(income));
-		i++;
-	} while(i < 100); // 100 сообщений
+		circle++;
+	} while(circle < total_messages); // 100 сообщений
 	
 	close(sd);
 	return 0;
 }
 
-int add_to_Clients(struct sockaddr_in *Clients, struct sockaddr_in to_addr) {
-	int k = 0;
-	for(;k <= 10; k++) {
-		if(Clients[k].sin_port == to_addr.sin_port) {
-			return 11;
-		} else if (!Clients[k].sin_port) {
-			return k;
-		}
-	}
-	return 11; // Массив полон, клиентов добавлять нельзя
-}
-
-void send_to_Clients(int index, struct sockaddr_in *Clients, struct sockaddr_in to_addr, int sd, socklen_t to_addrlen) {
+void send_to_Clients(struct sockaddr_in * Clients, struct sockaddr_in to_addr, int sd, socklen_t to_addrlen) {
 	int j = 0;
-	for(;j <= index && (Clients[j].sin_port); j++) {
+	int total_message_size = sizeof(income) + 30; 
+	for(;j <= total_clients && (Clients[j].sin_port); j++) {
 		if(Clients[j].sin_port == to_addr.sin_port) continue;
-		if(sendto(sd, income, sizeof(income), 0, (struct sockaddr*)&Clients[j], to_addrlen) == -1) {
+		char message[total_message_size];
+		memset(message, '\0',  total_message_size);
+		strcat(message, income);
+		if(sendto(sd, message, sizeof(message), 0, (struct sockaddr*)&Clients[j], to_addrlen) == -1) {
 			perror("not sent");
 		}
 	}
+}
+
+void printraw(const char *message) {
+	int size = 0;
+	while(message[size]) size++;
+	write(1, message, size);
 }
