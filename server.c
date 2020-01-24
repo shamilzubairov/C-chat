@@ -31,6 +31,8 @@ struct sockaddr_in Clients[10]; // Храним максимум 10 подклю
 
 void send_to_Clients(struct sockaddr_in *, struct sockaddr_in, int socket, socklen_t);
 
+int add_to_Clients(struct sockaddr_in*, struct sockaddr_in);
+
 void printraw(const char *);
 
 void sig_handler(int sig) {
@@ -70,16 +72,19 @@ int main() {
 
 	int circle = 0;
 	do {
-		alarm(20);
+		alarm(60);
 		socklen_t to_addrlen = sizeof(to_addr);
 		recvfrom(sd, income, sizeof(income), 0, (struct sockaddr*)&to_addr, &to_addrlen);
-		
+
 		if(!strncmp(income, "LOGIN::", 7)) {
 			static int count = 0;
-			Clients[count] = to_addr; // Клиента добавляем в массив
-			// Отправляем контрольный бит
-			sendto(sd, "1", 1, 0, (struct sockaddr*)&to_addr, to_addrlen);
-			count++;
+			if((count = add_to_Clients(Clients, to_addr)) <= total_clients) {
+				// Клиента добавляем в массив
+				Clients[count] = to_addr;
+				// Отправляем контрольный бит
+				sendto(sd, "1", 1, 0, (struct sockaddr*)&to_addr, to_addrlen);
+				count++;
+			}
 			continue;
 		}
 		send_to_Clients(Clients, to_addr, sd, to_addrlen);
@@ -104,6 +109,18 @@ void send_to_Clients(struct sockaddr_in * Clients, struct sockaddr_in to_addr, i
 			perror("not sent");
 		}
 	}
+}
+
+int add_to_Clients(struct sockaddr_in *Clients, struct sockaddr_in to_addr) {
+	int k = 0;
+	for(;k <= 10; k++) {
+		if(Clients[k].sin_port == to_addr.sin_port) {
+			return 11;
+		} else if (!Clients[k].sin_port) {
+			return k;
+		}
+	}
+	return 11; // Массив полон, клиентов добавлять нельзя
 }
 
 void printraw(const char *message) {

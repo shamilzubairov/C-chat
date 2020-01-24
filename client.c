@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <signal.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <netinet/in.h> // sockaddr_in
 #include <arpa/inet.h> // htons
@@ -36,7 +37,13 @@ void sig_handler(int sig) {
 int main() {
 	signal(SIGALRM, sig_handler);
 
-	printraw("Print your name: ");
+	printf("\n*****************************************************\n");
+	printf("*********** Welcome to Cool Little Chatt! ***********\n");
+	printf("*****************************************************\n");
+	printf("*****************************************************\n");
+	printf("\nTo start chatting you must set a name to your friends recognize you\n");
+	printf("-\n");
+	printraw("Print your chat-name here: ");
 	bzero(login, sizeof(login));
 	read(0, login, sizeof(login));
 	
@@ -44,7 +51,7 @@ int main() {
 	while(login[l]) l++;
 	login[--l] = '\0'; // Убираем перенос строки на конце
 	
-	printf("Wait...\n");
+	printf("Wait for connection...\n");
 
 	s_addr.sin_family = FAM;
 	s_addr.sin_port = htons(PORT);
@@ -56,30 +63,50 @@ int main() {
 	if(sd == -1) {
 		handle_error("Socket");
 	} else {
+		fcntl(sd, F_SETFL, fcntl(sd, F_GETFL) | O_NONBLOCK);
+		
 		char test[27] = "LOGIN::";
 		strcat(test, login);
-		 // Тестовый запрос для регистрации и отправка логина
-		sendto(sd, test, sizeof(test), 0, (struct sockaddr*)&s_addr, sizeof(s_addr));
 		
-		alarm(5);
-		// Если ответ не пришел через 5 сек. закрываем соединение
-		recvfrom(sd, income, sizeof(income), 0, NULL, 0);
+		int timer = 0;
+		while(timer < 10 && !income[0]) {
+			// Тестовый запрос для регистрации и отправка логина
+			// 10 раз отправляем тестовое сообщение
+			sendto(sd, test, sizeof(test), 0, (struct sockaddr*)&s_addr, sizeof(s_addr));
+			// ...и ждем ответа
+			recv(sd, income, sizeof(income), 0);
+			timer++;
+			sleep(1);
+		}
+		// Если ответ не пришел через 10 сек. закрываем соединение
+		if(timer == 10 && !income[0]) {
+			handle_error("Socket connection");
+		}
+
 		// Иначе установлено
 		printf("\nConnection with %s:%d established\n", HOST, PORT);
-		printf("You can start chatting by name - %s\n", login);
+		printf("You start chatting by name - %s\n\n", login);
+		printf("============CHAT RIGTH NOW============\n\n");
 	}
 
 	int i = 0;
 	do {
-		alarm(30);
+		alarm(60);
 		// Принимаем сообщения
 		if(fork() == 0) {
-			int i = 0;
+			int r_bytes = 0;
+			int max_messages = 0;
 			do {
-				recvfrom(sd, income, sizeof(income), 0, NULL, 0);
-				printf("%s", income);
-				i++;
-			} while(i < 100);
+				if(max_messages > 100) break;
+				r_bytes = recvfrom(sd, income, sizeof(income), 0, NULL, 0);
+				if(r_bytes == -1) {
+					sleep(1);
+					continue;
+				} else {
+					printf("%s", income);
+				}
+				max_messages++;
+			} while(1);
 
 			exit(0);
 		}
