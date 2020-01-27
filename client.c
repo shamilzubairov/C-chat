@@ -24,6 +24,7 @@ enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
 char login[20];
 char message[100];
 char income[100];
+int sd; // socket
 
 struct sockaddr_in s_addr;
 
@@ -31,11 +32,24 @@ void printraw(const char *);
 
 void sig_handler(int sig) {
 	printraw("Alarm::socket didn\'t get any response\n");
+	char message[40] = "";
+	strcat(message, login);
+	strcat(message, " leave this channel\n");
+	sendto(sd, message, sizeof(message), 0, (struct sockaddr*)&s_addr, sizeof(s_addr));
+	exit(1);
+}
+
+void sigint_handler(int sig) {
+	char message[40] = "";
+	strcat(message, login);
+	strcat(message, " leave this channel\n");
+	sendto(sd, message, sizeof(message), 0, (struct sockaddr*)&s_addr, sizeof(s_addr));
 	exit(1);
 }
 
 int main() {
 	signal(SIGALRM, sig_handler);
+	signal(SIGINT, sigint_handler);
 
 	printf("\n*****************************************************\n");
 	printf("*********** Welcome to Cool Little Chatt! ***********\n");
@@ -59,7 +73,7 @@ int main() {
 		handle_error("Invalid address");
 	}
 
-	int sd = socket(FAM, SOCK, 0);
+	sd = socket(FAM, SOCK, 0);
 	if(sd == -1) {
 		handle_error("Socket");
 	} else {
@@ -69,7 +83,7 @@ int main() {
 		strcat(test, login);
 		
 		int timer = 0;
-		while(timer < 10 && !income[0]) {
+		while(timer < 100 && !income[0]) {
 			// Тестовый запрос для регистрации и отправка логина
 			// 10 раз отправляем тестовое сообщение
 			sendto(sd, test, sizeof(test), 0, (struct sockaddr*)&s_addr, sizeof(s_addr));
@@ -79,19 +93,24 @@ int main() {
 			sleep(1);
 		}
 		// Если ответ не пришел через 10 сек. закрываем соединение
-		if(timer == 10 && !income[0]) {
+		if(timer == 100 && !income[0]) {
 			handle_error("Socket connection");
 		}
 
 		// Иначе установлено
 		printf("\nConnection with %s:%d established\n", HOST, PORT);
 		printf("You start chatting by name - %s\n\n", login);
-		printf("============CHAT RIGTH NOW============\n\n");
+		printf("============ CHAT RIGTH NOW ============\n\n");
+
+		char message[40] = "";
+		strcat(message, login);
+		strcat(message, " connected\n");
+		sendto(sd, message, sizeof(message), 0, (struct sockaddr*)&s_addr, sizeof(s_addr));
 	}
 
 	int i = 0;
 	do {
-		alarm(60);
+		alarm(120);
 		// Принимаем сообщения
 		if(fork() == 0) {
 			int r_bytes = 0;
@@ -116,6 +135,12 @@ int main() {
 		
 		if(!strncmp(message, "name::", 6)) {
 			// Сообщение направлено конкретному адресату
+			
+		}
+		
+		if(!strncmp(message, "exit::", 6)) {
+			// Пользователь покинул чат
+			
 		}
 
 		char full_message[sizeof(login) + sizeof(message) + 2];
