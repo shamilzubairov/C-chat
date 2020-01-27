@@ -87,11 +87,11 @@ int main() {
 			}
 			continue;
 		}
-		if(!strncmp(income, "name::", 6)) {
+		if(!strncmp(income, "::name", 6)) {
 			printf("%s\n", income);
 			continue;
 		}
-		if(!strncmp(income, "exit::", 6)) {
+		if(!strncmp(income, "::exit", 6)) {
 			printf("%s\n", income);
 			continue;
 		}

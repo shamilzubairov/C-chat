@@ -27,28 +27,42 @@ char income[100];
 int sd; // socket
 
 struct sockaddr_in s_addr;
+// struct sigaction act;
 
 void printraw(const char *);
 
+// Изменить на sigaction
 void sig_handler(int sig) {
 	printraw("Alarm::socket didn\'t get any response\n");
-	char message[40] = "";
+	char message[40] = "\t\t";
 	strcat(message, login);
-	strcat(message, " leave this channel\n");
+	strcat(message, " leave this chat\n");
 	sendto(sd, message, sizeof(message), 0, (struct sockaddr*)&s_addr, sizeof(s_addr));
 	exit(1);
 }
 
 void sigint_handler(int sig) {
-	char message[40] = "";
+	char message[40] = "\t\t";
 	strcat(message, login);
-	strcat(message, " leave this channel\n");
+	strcat(message, " leave this chat\n");
 	sendto(sd, message, sizeof(message), 0, (struct sockaddr*)&s_addr, sizeof(s_addr));
-	exit(1);
+	exit(0);
+}
+
+void sigint_child_handler(int sig) {
+	exit(0);
 }
 
 int main() {
 	signal(SIGALRM, sig_handler);
+	
+	// memset(&act, 0, sizeof(act));
+	// act.sa_handler = sigint_handler;
+	// sigset_t set; 
+	// sigemptyset(&set);
+	// sigaddset(&set, SIGUSR2);
+	// act.sa_mask = set;
+	// sigaction(SIGINT, &act, 0);
 	signal(SIGINT, sigint_handler);
 
 	printf("\n*****************************************************\n");
@@ -100,45 +114,49 @@ int main() {
 		// Иначе установлено
 		printf("\nConnection with %s:%d established\n", HOST, PORT);
 		printf("You start chatting by name - %s\n\n", login);
-		printf("============ CHAT RIGTH NOW ============\n\n");
+		printf("============ CHAT RIGHT NOW ============\n\n");
 
-		char message[40] = "";
+		char message[40] = "\t\t";
 		strcat(message, login);
-		strcat(message, " connected\n");
+		strcat(message, " join this chat\n");
 		sendto(sd, message, sizeof(message), 0, (struct sockaddr*)&s_addr, sizeof(s_addr));
 	}
 
+	// Принимаем сообщения
+	if(fork() == 0) {
+		// Чтоб сообщение о выходе из чата не задваивалось 
+		// при перехвате сигнала, добавляем перехватчик и в дочернем процессе 
+		signal(SIGINT, sigint_child_handler); 
+		int r_bytes = 0;
+		int max_messages = 0;
+		do {
+			if(max_messages > 100) break;
+			r_bytes = recvfrom(sd, income, sizeof(income), 0, NULL, 0);
+			if(r_bytes == -1) {
+				sleep(1);
+				continue;
+			} else {
+				printf("%s", income);
+			}
+			max_messages++;
+		} while(1);
+
+		exit(0);
+	}
+	
 	int i = 0;
 	do {
 		alarm(120);
-		// Принимаем сообщения
-		if(fork() == 0) {
-			int r_bytes = 0;
-			int max_messages = 0;
-			do {
-				if(max_messages > 100) break;
-				r_bytes = recvfrom(sd, income, sizeof(income), 0, NULL, 0);
-				if(r_bytes == -1) {
-					sleep(1);
-					continue;
-				} else {
-					printf("%s", income);
-				}
-				max_messages++;
-			} while(1);
-
-			exit(0);
-		}
 		// Отправляем сообщения
 		bzero(message, 100);
 		read(0, message, sizeof(message));
 		
-		if(!strncmp(message, "name::", 6)) {
+		if(!strncmp(message, "::name", 6)) {
 			// Сообщение направлено конкретному адресату
 			
 		}
 		
-		if(!strncmp(message, "exit::", 6)) {
+		if(!strncmp(message, "::exit", 6)) {
 			// Пользователь покинул чат
 			
 		}
