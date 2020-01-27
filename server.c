@@ -9,6 +9,8 @@
 #include <netinet/in.h> // sockaddr_in
 #include <arpa/inet.h> // htons
 
+
+
 #define handle_error(msg) \
 do { \
 	perror(msg); \
@@ -33,10 +35,10 @@ void send_to_Clients(struct sockaddr_in *, struct sockaddr_in, int socket, sockl
 
 int add_to_Clients(struct sockaddr_in*, struct sockaddr_in);
 
-void printraw(const char *);
+void printub(const char *);
 
 void sig_handler(int sig) {
-	printraw("alarm::server didn\'t get any message\n");
+	printub("alarm::server didn\'t get any message\n");
 	exit(1);
 }
 
@@ -48,6 +50,8 @@ int main() {
 	if(!inet_aton(HOST, &addr.sin_addr)) {
 		handle_error("invalid address");
 	}
+#ifdef DEBUG 
+	// [-DDEBUG=1 cmd]
 	// либо заменить на -  
 	// addr.sin_addr.s_addr = htonl(INADDR_ANY);
 	
@@ -56,6 +60,7 @@ int main() {
 	// Третий параметр - тип протокола, 
 	// в данном случае тип определяется двумя первыми параметрами;
 	// можно использовать IPPPORTO_UDP / IPPPORTO_TCP
+#endif
 	int sd = socket(FAM, SOCK, 0);
 	if(sd == -1) {
 		handle_error("socket");
@@ -65,7 +70,7 @@ int main() {
 	if(bnd == -1) {
 		handle_error("bind");
 	} else {
-		printraw("Server is working...\n------------------\n\n");
+		printub("Server is working...\n------------------\n\n");
 	}
 
 	bzero(Clients, sizeof(Clients));
@@ -76,7 +81,9 @@ int main() {
 		socklen_t to_addrlen = sizeof(to_addr);
 		recvfrom(sd, income, sizeof(income), 0, (struct sockaddr*)&to_addr, &to_addrlen);
 
-		if(!strncmp(income, "LOGIN::", 7)) {
+		if(!strncmp(income, "LOGIN::", 7)) { 
+			// Уязвимость -> LOGIN:: может быть введено пользователем вручную
+			// Как вариант можно отправлять хешируемое значение для логирования
 			static int count = 0;
 			if((count = add_to_Clients(Clients, to_addr)) <= total_clients) {
 				// Клиента добавляем в массив
@@ -131,7 +138,7 @@ int add_to_Clients(struct sockaddr_in *Clients, struct sockaddr_in to_addr) {
 	return 11; // Массив полон, клиентов добавлять нельзя
 }
 
-void printraw(const char *message) {
+void printub(const char *message) {
 	int size = 0;
 	while(message[size]) size++;
 	write(1, message, size);

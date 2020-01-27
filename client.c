@@ -21,19 +21,19 @@ do { \
 
 enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
 
+int sd; // сокет
 char login[20];
-char message[100];
-char income[100];
-int sd; // socket
+char message[100]; // исходящее сообщение (макс. длина 100 байт)
+char income[100]; // входящее сообщение (макс. длина 100 байт)
 
 struct sockaddr_in s_addr;
 // struct sigaction act;
 
-void printraw(const char *);
+void printub(const char *);
 
 // Изменить на sigaction
 void sig_handler(int sig) {
-	printraw("Alarm::socket didn\'t get any response\n");
+	printub("Alarm::socket didn\'t get any response\n");
 	char message[40] = "\t\t";
 	strcat(message, login);
 	strcat(message, " leave this chat\n");
@@ -66,12 +66,12 @@ int main() {
 	signal(SIGINT, sigint_handler);
 
 	printf("\n*****************************************************\n");
-	printf("*********** Welcome to Cool Little Chatt! ***********\n");
+	printf("******** Welcome to CLC (Cool Little Chat)! *********\n");
 	printf("*****************************************************\n");
 	printf("*****************************************************\n");
 	printf("\nTo start chatting you must set a name to your friends recognize you\n");
 	printf("-\n");
-	printraw("Print your chat-name here: ");
+	printub("Print your chat-name here: ");
 	bzero(login, sizeof(login));
 	read(0, login, sizeof(login));
 	
@@ -91,6 +91,7 @@ int main() {
 	if(sd == -1) {
 		handle_error("Socket");
 	} else {
+		// Неблокирующая работа сокета (для recv)
 		fcntl(sd, F_SETFL, fcntl(sd, F_GETFL) | O_NONBLOCK);
 		
 		char test[27] = "LOGIN::";
@@ -99,14 +100,14 @@ int main() {
 		int timer = 0;
 		while(timer < 100 && !income[0]) {
 			// Тестовый запрос для регистрации и отправка логина
-			// 10 раз отправляем тестовое сообщение
+			// 100 раз отправляем тестовое сообщение
 			sendto(sd, test, sizeof(test), 0, (struct sockaddr*)&s_addr, sizeof(s_addr));
 			// ...и ждем ответа
 			recv(sd, income, sizeof(income), 0);
 			timer++;
 			sleep(1);
 		}
-		// Если ответ не пришел через 10 сек. закрываем соединение
+		// Если ответ не пришел через 100 сек. закрываем соединение
 		if(timer == 100 && !income[0]) {
 			handle_error("Socket connection");
 		}
@@ -122,11 +123,12 @@ int main() {
 		sendto(sd, message, sizeof(message), 0, (struct sockaddr*)&s_addr, sizeof(s_addr));
 	}
 
-	// Принимаем сообщения
+	// Принимаем сообщения чепез дочерний процесс
 	if(fork() == 0) {
 		// Чтоб сообщение о выходе из чата не задваивалось 
 		// при перехвате сигнала, добавляем перехватчик и в дочернем процессе 
 		signal(SIGINT, sigint_child_handler); 
+		
 		int r_bytes = 0;
 		int max_messages = 0;
 		do {
@@ -144,10 +146,10 @@ int main() {
 		exit(0);
 	}
 	
+	// Отправляем сообщения в цикле (100 сообщений макс.)
 	int i = 0;
 	do {
 		alarm(120);
-		// Отправляем сообщения
 		bzero(message, 100);
 		read(0, message, sizeof(message));
 		
@@ -179,7 +181,8 @@ int main() {
 	return 0;
 }
 
-void printraw(const char *message) {
+// Низкоуровневая ф-ция вывода, нужна для вывода без буферизации
+void printub(const char *message) {
 	int size = 0;
 	while(message[size]) size++;
 	write(1, message, size);
