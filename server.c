@@ -77,9 +77,13 @@ int main() {
 
 	int circle = 0;
 	do {
-		alarm(60);
+		alarm(120);
 		socklen_t to_addrlen = sizeof(to_addr);
 		recvfrom(sd, income, sizeof(income), 0, (struct sockaddr*)&to_addr, &to_addrlen);
+		
+#ifdef DEBUG 
+	printf("%s\n", income);
+#endif
 
 		if(!strncmp(income, "LOGIN::", 7)) { 
 			// Уязвимость -> LOGIN:: может быть введено пользователем вручную
@@ -94,14 +98,19 @@ int main() {
 			}
 			continue;
 		}
-		if(!strncmp(income, "::name", 6)) {
+		char * istr;
+		if((istr = strstr(income, ": ::name"))) {
+			int ind = (int)(istr - income);
+			char log[ind];
+			strncpy(log, income, ind);
+			printf("%s\n", log);
+			continue;
+		}
+		if(strstr(income, ": ::exit")) {
 			printf("%s\n", income);
 			continue;
 		}
-		if(!strncmp(income, "::exit", 6)) {
-			printf("%s\n", income);
-			continue;
-		}
+
 		send_to_Clients(Clients, to_addr, sd, to_addrlen);
 
 		bzero(income, sizeof(income));
