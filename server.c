@@ -5,150 +5,221 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <sys/socket.h>
 #include <netinet/in.h> // sockaddr_in
 #include <arpa/inet.h> // htons
 
+#define TOTALCLIENTS 10
+#define MESSAGESSIZE 100
+#define SMALLMESSAGESSIZE 50
+#define LOGINSIZE 20
+#define TOKENSIZE 32
+#define CMDSIZE 6
 
+char TOKEN[TOKENSIZE] = "LOGIN::";
 
-#define handle_error(msg) \
-do { \
-	perror(msg); \
-	return(1); \
-} while(0)
+void printub(const char *);
+int getsize(const char *);
+void remove_nl(char *);
+void multistrcat(char *, ...);
 
-#define HOST "127.0.0.1"
-#define PORT 7654
+void sig_alarm(int);
+void sig_int(int);
+void sig_stub(int);
+
+int sys_error(char *);
 
 enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
 
-char income[100];
-int total_clients = 10;
-int total_messages = 100;
+struct Connection {
+	char *host;
+	int port;
+	int socket; // сокет
+	struct sockaddr_in addr;
+} conn = {
+	"127.0.0.1",
+	7654
+};
 
-struct sockaddr_in addr;
-struct sockaddr_in to_addr;
+struct Clients {
+	struct sockaddr_in addr[TOTALCLIENTS];
+	char login[TOTALCLIENTS];
+} clnt;
 
-struct sockaddr_in Clients[10]; // Храним максимум 10 подключенных
+struct SystemHandlers {
+	void (*sig_alarm) ();
+	void (*sig_int) ();
+	void (*sig_stub) ();
+	int (*sys_error) (char *);
+} hdl = {
+	&sig_alarm,
+	&sig_int,
+	&sig_stub,
+	&sys_error,
+};
 
-void send_to_Clients(struct sockaddr_in *, struct sockaddr_in, int socket, socklen_t);
+void sigaction_init(int sig, void handler());
 
-int add_to_Clients(struct sockaddr_in*, struct sockaddr_in);
+// -------------------------
+// -------------------------
+// -------------------------
+// -------------------------
+// -------------------------
+// -------------------------
 
-void printub(const char *);
+int add_client(struct Clients, struct sockaddr_in);
 
-void sig_handler(int sig) {
-	printub("alarm::server didn\'t get any message\n");
-	exit(1);
-}
+void send_to_clients(struct Connection, struct Clients, struct sockaddr_in, socklen_t);
 
 int main() {
-	signal(SIGALRM, sig_handler);
+	sigaction_init(SIGALRM, hdl.sig_alarm);
 
-	addr.sin_family = FAM;
-	addr.sin_port = htons(PORT);
-	if(!inet_aton(HOST, &addr.sin_addr)) {
-		handle_error("invalid address");
+	conn.addr.sin_family = FAM;
+	conn.addr.sin_port = htons(conn.port);
+	if(!inet_aton(conn.host, &conn.addr.sin_addr)) {
+		hdl.sys_error("Invalid address");
 	}
+	conn.socket = socket(FAM, SOCK, 0);
+	if(conn.socket == -1) {
+		hdl.sys_error("Socket connection");
+	}
+	int bnd = bind(conn.socket, (struct sockaddr*)&conn.addr, sizeof(conn.addr));
+	if(bnd == -1) {
+		hdl.sys_error("Bind connection");
+	} else {
+		printub("Server is working...\n----------------------\n\n");
+	}
+
+	char incoming[MESSAGESSIZE];
+	do {
+		bzero(incoming, MESSAGESSIZE);
+		struct sockaddr_in from_addr;
+		socklen_t addrlen = sizeof(from_addr);
+		alarm(120);
+		recvfrom(conn.socket, incoming, sizeof(incoming), 0, (struct sockaddr*)&from_addr, &addrlen);
 #ifdef DEBUG 
 	// [-DDEBUG=1 cmd]
-	// либо заменить на -  
-	// addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	
-	// FAM семейство адресации
-	// SOCK тип взаимодействия
-	// Третий параметр - тип протокола, 
-	// в данном случае тип определяется двумя первыми параметрами;
-	// можно использовать IPPPORTO_UDP / IPPPORTO_TCP
+	printf("%s\n", incoming);
 #endif
-	int sd = socket(FAM, SOCK, 0);
-	if(sd == -1) {
-		handle_error("socket");
-	}
-	
-	int bnd = bind(sd, (struct sockaddr*)&addr, sizeof(addr));
-	if(bnd == -1) {
-		handle_error("bind");
-	} else {
-		printub("Server is working...\n------------------\n\n");
-	}
-
-	bzero(Clients, sizeof(Clients));
-
-	int circle = 0;
-	do {
-		alarm(120);
-		socklen_t to_addrlen = sizeof(to_addr);
-		recvfrom(sd, income, sizeof(income), 0, (struct sockaddr*)&to_addr, &to_addrlen);
-		
-#ifdef DEBUG 
-	printf("%s\n", income);
-#endif
-
-		if(!strncmp(income, "LOGIN::", 7)) { 
+		if(!strncmp(incoming, TOKEN, 7)) { 
 			// Уязвимость -> LOGIN:: может быть введено пользователем вручную
 			// Как вариант можно отправлять хешируемое значение для логирования
 			static int count = 0;
-			if((count = add_to_Clients(Clients, to_addr)) <= total_clients) {
+			if((count = add_client(clnt, from_addr)) <= TOTALCLIENTS) {
 				// Клиента добавляем в массив
-				Clients[count] = to_addr;
+				clnt.addr[count] = from_addr;
 				// Отправляем контрольный бит
-				sendto(sd, "1", 1, 0, (struct sockaddr*)&to_addr, to_addrlen);
+				sendto(conn.socket, "1", 1, 0, (struct sockaddr*)&from_addr, addrlen);
 				count++;
 			}
 			continue;
 		}
 		char * istr;
-		if((istr = strstr(income, ": ::name"))) {
-			int ind = (int)(istr - income);
+		if((istr = strstr(incoming, ": ::name"))) {
+			int ind = (int)(istr - incoming);
 			char log[ind];
-			strncpy(log, income, ind);
+			strncpy(log, incoming, ind);
 			printf("%s\n", log);
 			continue;
 		}
-		if(strstr(income, ": ::exit")) {
-			printf("%s\n", income);
+		if(strstr(incoming, ": ::exit")) {
+			printf("%s\n", incoming);
 			continue;
 		}
 
-		send_to_Clients(Clients, to_addr, sd, to_addrlen);
-
-		bzero(income, sizeof(income));
-		circle++;
-	} while(circle < total_messages); // 100 сообщений
-	
-	close(sd);
+		send_to_clients(conn, clnt, from_addr, addrlen);
+	} while(1);
+	close(conn.socket);
 	return 0;
 }
 
-void send_to_Clients(struct sockaddr_in * Clients, struct sockaddr_in to_addr, int sd, socklen_t to_addrlen) {
-	int j = 0;
-	int total_message_size = sizeof(income) + 30; 
-	for(;j <= total_clients && (Clients[j].sin_port); j++) {
-		if(Clients[j].sin_port == to_addr.sin_port) continue;
-		char message[total_message_size];
-		memset(message, '\0',  total_message_size);
-		strcat(message, income);
-		if(sendto(sd, message, sizeof(message), 0, (struct sockaddr*)&Clients[j], to_addrlen) == -1) {
-			perror("not sent");
-		}
-	}
+// Низкоуровневая ф-ция вывода, нужна для вывода без буферизации
+void printub(const char *str) {
+	write(1, str, getsize(str));
 }
 
-int add_to_Clients(struct sockaddr_in *Clients, struct sockaddr_in to_addr) {
+// Чтоб не передавать параметр размера в функцию;
+// у указателя размер всегда равен 4 / 8 байтам,
+// а нужен реальный размер массива 
+int getsize(const char *str) {
+	int len = 0;
+	while(str[len]) len++;
+	return len;
+}
+
+void remove_nl(char *str) {
+	str[getsize(str) - 1] = '\0';
+}
+
+void multistrcat(char *str, ...) {
+	va_list args;
+    va_start(args, str);
+	bzero(str, getsize(str));
+	char *s_arg;
+	while (strcmp(s_arg = va_arg(args, char *), "\0")) {
+		strcat(str, s_arg);
+    }
+	va_end(args);
+}
+
+// Изменить на sigaction
+void sig_alarm(int sig) {
+	printub("Alarm::socket didn\'t get any response\n");
+	exit(1);
+}
+
+void sig_int(int sig) {
+	char notify[SMALLMESSAGESSIZE];
+	// multistrcat(notify, "\t\t", user.login, " leave this chat\n", "\0");
+	// send_message_to(conn, notify);
+	exit(0);
+}
+
+void sig_stub(int sig) {
+	exit(0);
+}
+
+void sigaction_init(int sig, void handler()) {
+	struct sigaction act;
+	memset(&act, 0, sizeof(act));
+	
+	sigset_t set;
+	sigemptyset(&set);
+	sigaddset(&set, sig);
+	act.sa_mask = set;
+	act.sa_handler = handler;
+	sigaction(sig, &act, 0);
+}
+
+int sys_error(char * msg) {
+	perror(msg);
+	return(1);
+}
+
+int add_client(struct Clients clnt, struct sockaddr_in from_addr) {
 	int k = 0;
 	for(;k <= 10; k++) {
-		if(Clients[k].sin_port == to_addr.sin_port) {
+		if(clnt.addr[k].sin_port == from_addr.sin_port) {
 			return 11;
-		} else if (!Clients[k].sin_port) {
+		} else if (!clnt.addr[k].sin_port) {
 			return k;
 		}
 	}
 	return 11; // Массив полон, клиентов добавлять нельзя
 }
 
-void printub(const char *message) {
-	int size = 0;
-	while(message[size]) size++;
-	write(1, message, size);
+void send_to_clients(struct Connection conn, struct Clients clnt, struct sockaddr_in from_addr, socklen_t addrlen) {
+	int j = 0;
+	int total_message_size = 30;
+	for(;j <= TOTALCLIENTS && (clnt.addr[j].sin_port); j++) {
+		if(clnt.addr[j].sin_port == from_addr.sin_port) continue;
+		char message[total_message_size];
+		bzero(message, total_message_size);
+		// strcat(message, income);
+		if(sendto(conn.socket, message, sizeof(message), 0, (struct sockaddr*)&clnt.addr[j], addrlen) == -1) {
+			perror("not sent");
+		}
+	}
 }
+
