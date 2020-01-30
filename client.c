@@ -14,10 +14,7 @@
 #define MESSAGESSIZE 100
 #define SMALLMESSAGESSIZE 50
 #define LOGINSIZE 20
-#define TOKENSIZE 32
 #define CMDSIZE 6
-
-char TOKEN[TOKENSIZE] = "LOGIN::";
 
 void printub(const char *);
 int getsize(const char *);
@@ -30,7 +27,7 @@ void sig_stub(int);
 
 int sys_error(char *);
 
-enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
+enum Family { FAM = AF_INET, SOCK = SOCK_STREAM };
 
 struct Commands {
 	char name[CMDSIZE];
@@ -49,11 +46,15 @@ struct UserData {
 struct Connection {
 	char *host;
 	int port;
-	int socket; // сокет
-	struct sockaddr_in s_addr;
+	int attempt; // Кол-во попыток подключения
+	int socket;
+	struct sockaddr_in * s_addr;
 } conn = {
 	"127.0.0.1",
-	7654
+	7654,
+	20,
+	-1,
+	NULL
 };
 
 struct SystemHandlers {
@@ -70,10 +71,6 @@ struct SystemHandlers {
 
 void sigaction_init(int sig, void handler());
 
-int has_connect(struct Connection, char *token);
-
-void send_message_to(struct Connection, const char *);
-
 int main() {
 	sigaction_init(SIGINT, hdl.sig_int);
 
@@ -85,58 +82,51 @@ int main() {
 	printub("-\n");
 	printub("Print your chat-name here: ");
 	bzero(user.login, sizeof(user.login));
-	// >>
 	read(0, user.login, sizeof(user.login));
-	// <<
 	remove_nl(user.login);
 	printub("Wait for connection...\n");
 
-	conn.s_addr.sin_family = FAM;
-	conn.s_addr.sin_port = htons(conn.port);
-	if(!inet_aton(conn.host, &conn.s_addr.sin_addr)) {
-		hdl.sys_error("Invalid address");
-	}
 	conn.socket = socket(FAM, SOCK, 0);
 	if(conn.socket == -1) {
-		hdl.sys_error("Socket");
+		hdl.sys_error("Socket stream connection");
+	}
+	conn.s_addr = malloc(sizeof(struct sockaddr));
+	conn.s_addr->sin_family = FAM;
+	conn.s_addr->sin_port = htons(conn.port);
+	if(!inet_aton(conn.host, &conn.s_addr->sin_addr)) {
+		hdl.sys_error("Invalid address");
+	}
+	int trytoconnect = 0,
+		connection;
+	do {
+		connection = connect(conn.socket, (struct sockaddr*)conn.s_addr, sizeof(struct sockaddr));
+		if(connection != -1) break;
+		// Ждем -> Закрываем и заново открываем сокет
+		sleep(1);
+		close(conn.socket);
+		conn.socket = socket(FAM, SOCK, 0);
+		trytoconnect++;
+	} while (trytoconnect < conn.attempt);
+	if(connection == -1) {
+		hdl.sys_error("Connection stream failed");
 	} else {
-		// Неблокирующая работа сокета (для recv)
-		fcntl(conn.socket, F_SETFL, fcntl(conn.socket, F_GETFL) | O_NONBLOCK);
-		strcat(TOKEN, user.login);
-		if(has_connect(conn, TOKEN)) {
-			printf("\nConnection with %s:%d established\n", conn.host, conn.port);
-			printf("You start chatting by name - %s\n\n", user.login);
-			printub("============ CHAT RIGHT NOW ============\n\n");
-			char notify[SMALLMESSAGESSIZE];
-			multistrcat(notify, "\t\t", user.login, " join this chat\n", "\0");
-			send_message_to(conn, notify);
-		} else {
-			hdl.sys_error("Socket connection");
-		}
+		write(conn.socket, user.login, LOGINSIZE);
+		printf("\nConnection with %s:%d established by PID - %d\n", conn.host, conn.port, getpid());
+		printf("You start chatting by name - %s\n\n", user.login);
+		printub("============ CHAT RIGHT NOW ============\n\n");
 	}
 
-	// Принимаем сообщения чепез дочерний процесс
+	char greeting[SMALLMESSAGESSIZE];
+	multistrcat(greeting, "\t\t", user.login, " join this chat\n", "\0");
+	write(conn.socket, greeting, SMALLMESSAGESSIZE);
+
 	if(fork() == 0) {
-		// Чтоб сообщение о выходе из чата не задваивалось 
-		// при перехвате сигнала, добавляем перехватчик и в дочернем процессе 
 		sigaction_init(SIGINT, hdl.sig_stub);
 		char incoming[MESSAGESSIZE];
-		int max_messages = 0;
-		int timeout = 0;
 		do {
 			bzero(incoming, MESSAGESSIZE);
-			if(timeout > 120) {
-				// Убить текущий дочерний процесс и создать новый
-			};
-			int r_bytes =  recv(conn.socket, incoming, sizeof(incoming), 0);
-			if(r_bytes == -1) {
-				timeout++;
-				usleep(500);
-				continue;
-			} else {
-				printub(incoming);
-			}
-			max_messages++;
+			read(conn.socket, incoming, sizeof(incoming));
+			printub(incoming);
 		} while(1);
 		exit(0);
 	}
@@ -144,21 +134,12 @@ int main() {
 	char reading[MESSAGESSIZE];
 	do {
 		bzero(reading, MESSAGESSIZE);
-		// >>
 		read(0, reading, sizeof(reading));
-		// <<
-		if(!strncmp(reading, cmd.name, CMDSIZE)) {
-			// Сообщение направлено конкретному адресату
-			
-		}
-		if(!strncmp(reading, cmd.exit, CMDSIZE)) {
-			// Пользователь покинул чат
-			
-		}
 		char outgoing[MESSAGESSIZE + LOGINSIZE];
 		multistrcat(outgoing, user.login, ": ", reading, "\0");
-		send_message_to(conn, outgoing);
+		write(conn.socket, outgoing, sizeof(outgoing));
 	} while(1);
+
 	close(conn.socket);
 	return 0;
 }
@@ -201,7 +182,7 @@ void sig_alarm(int sig) {
 void sig_int(int sig) {
 	char notify[SMALLMESSAGESSIZE];
 	multistrcat(notify, "\t\t", user.login, " leave this chat\n", "\0");
-	send_message_to(conn, notify);
+	write(conn.socket, notify, sizeof(notify));
 	exit(0);
 }
 
@@ -223,28 +204,5 @@ void sigaction_init(int sig, void handler()) {
 
 int sys_error(char * msg) {
 	perror(msg);
-	return(1);
-}
-
-int has_connect(struct Connection conn, char * TOKEN) {
-	char incoming[MESSAGESSIZE];
-	bzero(incoming, MESSAGESSIZE);
-	int messagecount = 0;
-	while(messagecount < MESSAGESSIZE && !incoming[0]) {
-		// Тестовый запрос для регистрации и отправка логина
-		// 100 раз отправляем тестовое сообщение
-		send_message_to(conn, TOKEN);
-		// ...и ждем ответа
-		recv(conn.socket, incoming, sizeof(incoming), 0);
-		messagecount++;
-		sleep(1);
-	}
-	return !(messagecount == MESSAGESSIZE && !incoming[0]);
-}
-
-void send_message_to(struct Connection conn, const char * message) {
-	int s = sendto(conn.socket, message, getsize(message), 0, (struct sockaddr*)&conn.s_addr, sizeof(conn.s_addr));
-	if(s == -1) {
-		hdl.sys_error("Send");
-	}
+	exit(1);
 }

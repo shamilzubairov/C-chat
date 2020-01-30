@@ -10,14 +10,9 @@
 #include <netinet/in.h> // sockaddr_in
 #include <arpa/inet.h> // htons
 
-#define TOTALCLIENTS 10
+#define MAXCLIENTSSIZE 10
 #define MESSAGESSIZE 100
-#define SMALLMESSAGESSIZE 50
 #define LOGINSIZE 20
-#define TOKENSIZE 32
-#define CMDSIZE 6
-
-char TOKEN[TOKENSIZE] = "LOGIN::";
 
 void printub(const char *);
 int getsize(const char *);
@@ -27,32 +22,34 @@ void multistrcat(char *, ...);
 void sig_alarm(int);
 void sig_int(int);
 void sig_stub(int);
-
 int sys_error(char *);
 
-enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
+enum Family { FAM = AF_INET, SOCK = SOCK_STREAM };
 
-struct Connection {
+struct Server {
 	char *host;
 	int port;
-	int socket; // сокет
-	struct sockaddr_in addr;
-} conn = {
+	int socket; // сокет для подключения
+	struct sockaddr_in s_addr;
+} server = {
 	"127.0.0.1",
-	7654
+	7654,
+	-1,
+	0
 };
 
 struct Clients {
-	struct sockaddr_in addr[TOTALCLIENTS];
-	char login[TOTALCLIENTS];
-} clnt;
+	struct sockaddr_in c_addr[MAXCLIENTSSIZE];
+	char * login[LOGINSIZE];
+	int cur_client_size;
+} * client;
 
 struct SystemHandlers {
 	void (*sig_alarm) ();
 	void (*sig_int) ();
 	void (*sig_stub) ();
 	int (*sys_error) (char *);
-} hdl = {
+} handler = {
 	&sig_alarm,
 	&sig_int,
 	&sig_stub,
@@ -61,77 +58,102 @@ struct SystemHandlers {
 
 void sigaction_init(int sig, void handler());
 
-// -------------------------
-// -------------------------
-// -------------------------
-// -------------------------
-// -------------------------
-// -------------------------
-
-int add_client(struct Clients, struct sockaddr_in);
-
-void send_to_clients(struct Connection, struct Clients, struct sockaddr_in, socklen_t);
+void send_to_clients(int, struct Clients *, int, const char *);
 
 int main() {
-	sigaction_init(SIGALRM, hdl.sig_alarm);
+	sigaction_init(SIGALRM, handler.sig_alarm);
+	sigaction_init(SIGINT, handler.sig_int);
 
-	conn.addr.sin_family = FAM;
-	conn.addr.sin_port = htons(conn.port);
-	if(!inet_aton(conn.host, &conn.addr.sin_addr)) {
-		hdl.sys_error("Invalid address");
+	server.socket = socket(FAM, SOCK, 0);
+	if(server.socket == -1) {
+		handler.sys_error("Socket connection");
 	}
-	conn.socket = socket(FAM, SOCK, 0);
-	if(conn.socket == -1) {
-		hdl.sys_error("Socket connection");
+	server.s_addr.sin_family = FAM;
+	server.s_addr.sin_port = htons(server.port);
+	if(!inet_aton(server.host, &server.s_addr.sin_addr)) {
+		handler.sys_error("Invalid address");
 	}
-	int bnd = bind(conn.socket, (struct sockaddr*)&conn.addr, sizeof(conn.addr));
-	if(bnd == -1) {
-		hdl.sys_error("Bind connection");
+	int opt = 1;
+	setsockopt(server.socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	if(bind(server.socket, (struct sockaddr *)&server.s_addr, sizeof(struct sockaddr)) == -1) {
+		handler.sys_error("Bind connection");
 	} else {
-		printub("Server is working...\n----------------------\n\n");
+		printf("Server is working by PID - %d\n----------------------\n\n", getpid());
 	}
 
-	char incoming[MESSAGESSIZE];
-	do {
-		bzero(incoming, MESSAGESSIZE);
-		struct sockaddr_in from_addr;
-		socklen_t addrlen = sizeof(from_addr);
-		alarm(120);
-		recvfrom(conn.socket, incoming, sizeof(incoming), 0, (struct sockaddr*)&from_addr, &addrlen);
-#ifdef DEBUG 
-	// [-DDEBUG=1 cmd]
-	printf("%s\n", incoming);
-#endif
-		if(!strncmp(incoming, TOKEN, 7)) { 
-			// Уязвимость -> LOGIN:: может быть введено пользователем вручную
-			// Как вариант можно отправлять хешируемое значение для логирования
-			static int count = 0;
-			if((count = add_client(clnt, from_addr)) <= TOTALCLIENTS) {
-				// Клиента добавляем в массив
-				clnt.addr[count] = from_addr;
-				// Отправляем контрольный бит
-				sendto(conn.socket, "1", 1, 0, (struct sockaddr*)&from_addr, addrlen);
-				count++;
-			}
-			continue;
-		}
-		char * istr;
-		if((istr = strstr(incoming, ": ::name"))) {
-			int ind = (int)(istr - incoming);
-			char log[ind];
-			strncpy(log, incoming, ind);
-			printf("%s\n", log);
-			continue;
-		}
-		if(strstr(incoming, ": ::exit")) {
-			printf("%s\n", incoming);
-			continue;
-		}
+	listen(server.socket, 5);
 
-		send_to_clients(conn, clnt, from_addr, addrlen);
+	char login[MESSAGESSIZE];
+	int socket_accept;
+	client = malloc(1024);
+	do {
+		bzero(login, MESSAGESSIZE);
+		struct sockaddr_in from_addr;
+		socklen_t from_addrlen = sizeof(from_addr);
+		if(client->cur_client_size > MAXCLIENTSSIZE) {
+			// Достигнуто макс. кол-во клиентов
+			// Отослать уведомление
+		}
+		alarm(120);
+		socket_accept = accept(server.socket, (struct sockaddr*)&from_addr, &from_addrlen);
+		if(socket_accept == -1) {
+			handler.sys_error("Accepted socket error");
+		} else {
+			printf("Connection with %d\n", from_addr.sin_port);
+			// Регистрируем участника
+			client->login[client->cur_client_size] = malloc(LOGINSIZE);
+			strcpy(client->login[client->cur_client_size], login);
+			client->c_addr[client->cur_client_size] = from_addr;
+			client->cur_client_size++;
+		}
+// >>>>>>>>>>>>>>>>>>>>>>>>
+		// Открываем дейтаграммное соединение
+		// if(fork() == 0) {
+		// 	close(socket_accept);
+		// 	close(server.socket_stream);
+
+		// 	char *argv[] = {"dserver", NULL};
+		// 	execvp("./dserver", argv);
+		// 	handler.sys_error("Dserver");
+		// 	exit(0);
+		// }
+// >>>>>>>>>>>>>>>>>>>>>>>>
+		if(fork() == 0) {
+			sigaction_init(SIGALRM, handler.sig_alarm);
+			sigaction_init(SIGINT, handler.sig_stub);
+			
+			close(server.socket);
+
+			int register_port = from_addr.sin_port;
+			char incoming[MESSAGESSIZE];
+			do {
+				bzero(incoming, MESSAGESSIZE);
+				alarm(120);
+				read(socket_accept, incoming, MESSAGESSIZE);
+				send_to_clients(socket_accept, client, register_port, incoming);
+			} while(1);
+			exit(0);
+		}
+// >>>>>>>>>>>>>>>>>>>>>>>>
 	} while(1);
-	close(conn.socket);
+	close(socket_accept);
+	close(server.socket);
 	return 0;
+}
+
+void send_to_clients(int socket, struct Clients * client, int register_port, const char * incoming) {
+	int j = 0;
+	for(;j < client->cur_client_size; j++) {
+		if(client->c_addr[j].sin_port == register_port) continue;
+		printf("CL PORT %d\n", client->c_addr[j].sin_port);
+		printf("CL LOGIN %s\n", client->login[j]);
+		printf("MY PORT %d\n", register_port);
+		printf("MESSAGE %s\n", incoming);
+		printf("--------------------------\n");
+		if(write(socket, incoming, getsize(incoming)) == -1) {
+			handler.sys_error("Send");
+		}
+	}
 }
 
 // Низкоуровневая ф-ция вывода, нужна для вывода без буферизации
@@ -170,9 +192,8 @@ void sig_alarm(int sig) {
 }
 
 void sig_int(int sig) {
-	char notify[SMALLMESSAGESSIZE];
-	// multistrcat(notify, "\t\t", user.login, " leave this chat\n", "\0");
-	// send_message_to(conn, notify);
+	char notify[] = "\t\tConnection closed\n";
+	// send_all(server, clnt, notify);
 	exit(0);
 }
 
@@ -194,32 +215,5 @@ void sigaction_init(int sig, void handler()) {
 
 int sys_error(char * msg) {
 	perror(msg);
-	return(1);
+	exit(1);
 }
-
-int add_client(struct Clients clnt, struct sockaddr_in from_addr) {
-	int k = 0;
-	for(;k <= 10; k++) {
-		if(clnt.addr[k].sin_port == from_addr.sin_port) {
-			return 11;
-		} else if (!clnt.addr[k].sin_port) {
-			return k;
-		}
-	}
-	return 11; // Массив полон, клиентов добавлять нельзя
-}
-
-void send_to_clients(struct Connection conn, struct Clients clnt, struct sockaddr_in from_addr, socklen_t addrlen) {
-	int j = 0;
-	int total_message_size = 30;
-	for(;j <= TOTALCLIENTS && (clnt.addr[j].sin_port); j++) {
-		if(clnt.addr[j].sin_port == from_addr.sin_port) continue;
-		char message[total_message_size];
-		bzero(message, total_message_size);
-		// strcat(message, income);
-		if(sendto(conn.socket, message, sizeof(message), 0, (struct sockaddr*)&clnt.addr[j], addrlen) == -1) {
-			perror("not sent");
-		}
-	}
-}
-
