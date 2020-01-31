@@ -24,10 +24,10 @@ void sig_int(int);
 void sig_stub(int);
 int sys_error(char *);
 
-enum Family { FAM = AF_INET, SOCK = SOCK_STREAM };
+enum Family { FAM = AF_INET, SOCK = SOCK_STREAM, SOCK_UDP = SOCK_DGRAM };
 
 struct Server {
-	char *host;
+	char * host;
 	int port;
 	int socket; // сокет для подключения
 	struct sockaddr_in s_addr;
@@ -38,11 +38,28 @@ struct Server {
 	0
 };
 
+struct ServerUDP {
+	char * host;
+	int port;
+	int socket; // сокет для подключения
+	struct sockaddr_in s_addr;
+} udp = {
+	"127.0.0.1",
+	7660,
+	-1,
+	0
+};
+
 struct Clients {
+	int c_socket[MAXCLIENTSSIZE];
 	struct sockaddr_in c_addr[MAXCLIENTSSIZE];
-	char * login[LOGINSIZE];
 	int cur_client_size;
-} * client;
+	char * login[LOGINSIZE];
+} client = {
+	-1,
+	0,
+	0
+};
 
 struct SystemHandlers {
 	void (*sig_alarm) ();
@@ -58,11 +75,15 @@ struct SystemHandlers {
 
 void sigaction_init(int sig, void handler());
 
-void send_to_clients(int, struct Clients *, int, const char *);
+void send_to_clients(int, struct Clients, int, const char *);
+
+void send_notify(int, struct Clients, const char *);
 
 int main() {
 	sigaction_init(SIGALRM, handler.sig_alarm);
 	sigaction_init(SIGINT, handler.sig_int);
+
+// >>>>>>>>>>>>>>>>>> TCP >>>>>>>>>>>>>>>>>>>>>
 
 	server.socket = socket(FAM, SOCK, 0);
 	if(server.socket == -1) {
@@ -75,83 +96,103 @@ int main() {
 	}
 	int opt = 1;
 	setsockopt(server.socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-	if(bind(server.socket, (struct sockaddr *)&server.s_addr, sizeof(struct sockaddr)) == -1) {
+	if(bind(server.socket, (struct sockaddr *)&server.s_addr, sizeof(server.s_addr)) == -1) {
 		handler.sys_error("Bind connection");
 	} else {
 		printf("Server is working by PID - %d\n----------------------\n\n", getpid());
 	}
 
+// >>>>>>>>>>>>>>>>>> UDP >>>>>>>>>>>>>>>>>>>>>
+
+	udp.socket = socket(FAM, SOCK_UDP, 0);
+	if(udp.socket == -1) {
+		handler.sys_error("UDP socket connection");
+	}
+	udp.s_addr.sin_family = FAM;
+	udp.s_addr.sin_port = htons(udp.port);
+	if(!inet_aton(udp.host, &udp.s_addr.sin_addr)) {
+		handler.sys_error("UDP Invalid address");
+	}
+	setsockopt(udp.socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	if(bind(udp.socket, (struct sockaddr *)&udp.s_addr, sizeof(udp.s_addr)) == -1) {
+		handler.sys_error("UDP bind connection");
+	}
+
+// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
 	listen(server.socket, 5);
 
-	char login[MESSAGESSIZE];
 	int socket_accept;
-	client = malloc(1024);
 	do {
-		bzero(login, MESSAGESSIZE);
-		struct sockaddr_in from_addr;
-		socklen_t from_addrlen = sizeof(from_addr);
-		if(client->cur_client_size > MAXCLIENTSSIZE) {
+		if(client.cur_client_size > MAXCLIENTSSIZE) {
 			// Достигнуто макс. кол-во клиентов
 			// Отослать уведомление
 		}
+
+		char login[MESSAGESSIZE];
+		bzero(login, MESSAGESSIZE);
+		struct sockaddr_in from_addr;
+		socklen_t from_addrlen = sizeof(from_addr);
+		
 		alarm(120);
 		socket_accept = accept(server.socket, (struct sockaddr*)&from_addr, &from_addrlen);
 		if(socket_accept == -1) {
 			handler.sys_error("Accepted socket error");
 		} else {
-			printf("Connection with %d\n", from_addr.sin_port);
+			read(socket_accept, login, LOGINSIZE);
 			// Регистрируем участника
-			client->login[client->cur_client_size] = malloc(LOGINSIZE);
-			strcpy(client->login[client->cur_client_size], login);
-			client->c_addr[client->cur_client_size] = from_addr;
-			client->cur_client_size++;
+			client.login[client.cur_client_size] = malloc(LOGINSIZE);
+			strcpy(client.login[client.cur_client_size], login);
+			client.c_socket[client.cur_client_size] = socket_accept;
+			client.c_addr[client.cur_client_size] = from_addr;
+			printf("Connection with %d by login %s\n", 
+				client.c_addr[client.cur_client_size].sin_port, 
+				client.login[client.cur_client_size]);
+			client.cur_client_size++;
 		}
-// >>>>>>>>>>>>>>>>>>>>>>>>
-		// Открываем дейтаграммное соединение
-		// if(fork() == 0) {
-		// 	close(socket_accept);
-		// 	close(server.socket_stream);
-
-		// 	char *argv[] = {"dserver", NULL};
-		// 	execvp("./dserver", argv);
-		// 	handler.sys_error("Dserver");
-		// 	exit(0);
-		// }
-// >>>>>>>>>>>>>>>>>>>>>>>>
+		
 		if(fork() == 0) {
 			sigaction_init(SIGALRM, handler.sig_alarm);
 			sigaction_init(SIGINT, handler.sig_stub);
-			
-			close(server.socket);
 
-			int register_port = from_addr.sin_port;
+			close(server.socket);
+			close(socket_accept);
+
+			int register_port;
 			char incoming[MESSAGESSIZE];
+			struct sockaddr_in from_addr;
+			socklen_t from_addrlen = sizeof(from_addr);
 			do {
 				bzero(incoming, MESSAGESSIZE);
 				alarm(120);
-				read(socket_accept, incoming, MESSAGESSIZE);
-				send_to_clients(socket_accept, client, register_port, incoming);
+				recvfrom(udp.socket, incoming, MESSAGESSIZE, 0, (struct sockaddr *)&from_addr, &from_addrlen);
+				register_port = from_addr.sin_port;
+				send_to_clients(udp.socket, client, register_port, incoming);
 			} while(1);
 			exit(0);
 		}
 // >>>>>>>>>>>>>>>>>>>>>>>>
 	} while(1);
-	close(socket_accept);
+
+	close(udp.socket);
 	close(server.socket);
 	return 0;
 }
 
-void send_to_clients(int socket, struct Clients * client, int register_port, const char * incoming) {
+void send_to_clients(int socket, struct Clients client, int register_port, const char * incoming) {
 	int j = 0;
-	for(;j < client->cur_client_size; j++) {
-		if(client->c_addr[j].sin_port == register_port) continue;
-		printf("CL PORT %d\n", client->c_addr[j].sin_port);
-		printf("CL LOGIN %s\n", client->login[j]);
-		printf("MY PORT %d\n", register_port);
-		printf("MESSAGE %s\n", incoming);
-		printf("--------------------------\n");
-		if(write(socket, incoming, getsize(incoming)) == -1) {
-			handler.sys_error("Send");
+	for(;j < client.cur_client_size; j++) {
+		if(sendto(socket, incoming, getsize(incoming), 0, (struct sockaddr *)&client.c_addr[j], sizeof(client.c_addr[j])) == -1) {
+			handler.sys_error("Send to clients");
+		}
+	}
+}
+
+void send_notify(int socket, struct Clients client, const char * incoming) {
+	int j = 0;
+	for(;j < client.cur_client_size; j++) {
+		if(sendto(socket, incoming, getsize(incoming), 0, (struct sockaddr *)&client.c_addr[j], sizeof(client.c_addr[j])) == -1) {
+			handler.sys_error("Send notify");
 		}
 	}
 }
@@ -193,7 +234,7 @@ void sig_alarm(int sig) {
 
 void sig_int(int sig) {
 	char notify[] = "\t\tConnection closed\n";
-	// send_all(server, clnt, notify);
+	send_notify(udp.socket, client, notify);
 	exit(0);
 }
 
@@ -216,4 +257,15 @@ void sigaction_init(int sig, void handler()) {
 int sys_error(char * msg) {
 	perror(msg);
 	exit(1);
+}
+
+void close_sockets(int num, ...) {
+	va_list args;
+    va_start(args, num);
+	int sock;
+	while ((sock = va_arg(args, int)) && num != 0) {
+		close(sock);
+		num--;
+    }
+	va_end(args);
 }

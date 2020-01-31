@@ -27,7 +27,7 @@ void sig_stub(int);
 
 int sys_error(char *);
 
-enum Family { FAM = AF_INET, SOCK = SOCK_STREAM };
+enum Family { FAM = AF_INET, SOCK = SOCK_STREAM, SOCK_UDP = SOCK_DGRAM };
 
 struct Commands {
 	char name[CMDSIZE];
@@ -48,13 +48,25 @@ struct Connection {
 	int port;
 	int attempt; // Кол-во попыток подключения
 	int socket;
-	struct sockaddr_in * s_addr;
+	struct sockaddr_in s_addr;
 } conn = {
 	"127.0.0.1",
 	7654,
 	20,
 	-1,
-	NULL
+	0
+};
+
+struct UDPConnection {
+	char *host;
+	int port;
+	int socket;
+	struct sockaddr_in s_addr;
+} udp = {
+	"127.0.0.1",
+	7660,
+	-1,
+	0
 };
 
 struct SystemHandlers {
@@ -62,7 +74,7 @@ struct SystemHandlers {
 	void (*sig_int) ();
 	void (*sig_stub) ();
 	int (*sys_error) (char *);
-} hdl = {
+} handler = {
 	&sig_alarm,
 	&sig_int,
 	&sig_stub,
@@ -72,7 +84,7 @@ struct SystemHandlers {
 void sigaction_init(int sig, void handler());
 
 int main() {
-	sigaction_init(SIGINT, hdl.sig_int);
+	sigaction_init(SIGINT, handler.sig_int);
 
 	printub("\n*****************************************************\n");
 	printub("******** Welcome to CLC (Cool Little Chat)! *********\n");
@@ -88,18 +100,17 @@ int main() {
 
 	conn.socket = socket(FAM, SOCK, 0);
 	if(conn.socket == -1) {
-		hdl.sys_error("Socket stream connection");
+		handler.sys_error("Socket stream connection");
 	}
-	conn.s_addr = malloc(sizeof(struct sockaddr));
-	conn.s_addr->sin_family = FAM;
-	conn.s_addr->sin_port = htons(conn.port);
-	if(!inet_aton(conn.host, &conn.s_addr->sin_addr)) {
-		hdl.sys_error("Invalid address");
+	conn.s_addr.sin_family = FAM;
+	conn.s_addr.sin_port = htons(conn.port);
+	if(!inet_aton(conn.host, &conn.s_addr.sin_addr)) {
+		handler.sys_error("Invalid address");
 	}
 	int trytoconnect = 0,
 		connection;
 	do {
-		connection = connect(conn.socket, (struct sockaddr*)conn.s_addr, sizeof(struct sockaddr));
+		connection = connect(conn.socket, (struct sockaddr*)&conn.s_addr, sizeof(conn.s_addr));
 		if(connection != -1) break;
 		// Ждем -> Закрываем и заново открываем сокет
 		sleep(1);
@@ -108,24 +119,43 @@ int main() {
 		trytoconnect++;
 	} while (trytoconnect < conn.attempt);
 	if(connection == -1) {
-		hdl.sys_error("Connection stream failed");
+		handler.sys_error("Connection stream failed");
 	} else {
+		// Регистрация
 		write(conn.socket, user.login, LOGINSIZE);
 		printf("\nConnection with %s:%d established by PID - %d\n", conn.host, conn.port, getpid());
 		printf("You start chatting by name - %s\n\n", user.login);
 		printub("============ CHAT RIGHT NOW ============\n\n");
 	}
 
-	char greeting[SMALLMESSAGESSIZE];
-	multistrcat(greeting, "\t\t", user.login, " join this chat\n", "\0");
-	write(conn.socket, greeting, SMALLMESSAGESSIZE);
+// >>>>>>>>>>>>>>>>>> UDP >>>>>>>>>>>>>>>>>>>>>
+	
+	udp.socket = socket(FAM, SOCK_UDP, 0);
+	if(udp.socket == -1) {
+		handler.sys_error("UDP: socket connection");
+	}
+	udp.s_addr.sin_family = FAM;
+	udp.s_addr.sin_port = htons(udp.port);
+	if(!inet_aton(udp.host, &udp.s_addr.sin_addr)) {
+		handler.sys_error("Invalid address");
+	}
+	if(connect(udp.socket, (struct sockaddr*)&udp.s_addr, sizeof(udp.s_addr)) == -1) {
+		handler.sys_error("UDP connection");
+	}
 
 	if(fork() == 0) {
-		sigaction_init(SIGINT, hdl.sig_stub);
+		sigaction_init(SIGINT, handler.sig_stub);
+
+		char greeting[SMALLMESSAGESSIZE];
+		multistrcat(greeting, "\t\t", user.login, " join this chat\n", "\0");
+		if(write(udp.socket, greeting, SMALLMESSAGESSIZE) == -1) {
+			handler.sys_error("Write (greeting)");
+		}
+
 		char incoming[MESSAGESSIZE];
 		do {
 			bzero(incoming, MESSAGESSIZE);
-			read(conn.socket, incoming, sizeof(incoming));
+			read(udp.socket, incoming, sizeof(incoming));
 			printub(incoming);
 		} while(1);
 		exit(0);
@@ -137,9 +167,10 @@ int main() {
 		read(0, reading, sizeof(reading));
 		char outgoing[MESSAGESSIZE + LOGINSIZE];
 		multistrcat(outgoing, user.login, ": ", reading, "\0");
-		write(conn.socket, outgoing, sizeof(outgoing));
+		write(udp.socket, outgoing, sizeof(outgoing));
 	} while(1);
 
+	close(udp.socket);
 	close(conn.socket);
 	return 0;
 }
@@ -182,7 +213,7 @@ void sig_alarm(int sig) {
 void sig_int(int sig) {
 	char notify[SMALLMESSAGESSIZE];
 	multistrcat(notify, "\t\t", user.login, " leave this chat\n", "\0");
-	write(conn.socket, notify, sizeof(notify));
+	write(udp.socket, notify, sizeof(notify));
 	exit(0);
 }
 
