@@ -4,12 +4,39 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <errno.h>
+#include <time.h>
 #include <signal.h>
-#include <fcntl.h>
 #include <stdarg.h>
+#include <arpa/inet.h> // htons
+
+// platform detection
+#define OS_WINDOWS 1
+#define OS_MAC 2
+#define OS_UNIX 3
+
+#if defined(_WIN32)
+#define OS OS_WINDOWS
+#elif defined(__APPLE__)
+#define OS OS_MAC
+#else
+#define OS OS_UNIX
+#endif
+
+#if OS == OS_WINDOWS
+#include <winsock2.h>
+#elif OS == OS_MAC || OS == OS_UNIX
 #include <sys/socket.h>
 #include <netinet/in.h> // sockaddr_in
-#include <arpa/inet.h> // htons
+#include <fcntl.h>
+#endif
+
+#if OS == OS_WINDOWS
+#pragma comment( lib, "wsock32.lib" )
+#endif
+
+#if OS == OS_WINDOWS
+typedef int socklen_t;
+#endif
 
 #define MESSAGESSIZE 100
 #define SMALLMESSAGESSIZE 50
@@ -20,6 +47,8 @@ void printub(const char *);
 int getsize(const char *);
 void remove_nl(char *);
 void multistrcat(char *, ...);
+void itoa(int, char *);
+void reverse(char *);
 
 void sig_alarm(int);
 void sig_int(int);
@@ -27,7 +56,22 @@ void sig_stub(int);
 
 int sys_error(char *);
 
-enum Family { FAM = AF_INET, SOCK = SOCK_STREAM, SOCK_UDP = SOCK_DGRAM };
+enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
+
+struct UDPConnection {
+	char * host;
+	int port;
+	int attempt;
+	int socket;
+	struct sockaddr_in address;
+	char register_token[SMALLMESSAGESSIZE];
+} udp = {
+	"127.0.0.1",
+	7666,
+	10,
+	-1,
+	0
+};
 
 struct Commands {
 	char name[CMDSIZE];
@@ -43,32 +87,6 @@ struct UserData {
 	char login[LOGINSIZE];
 } user;
 
-struct Connection {
-	char *host;
-	int port;
-	int attempt; // Кол-во попыток подключения
-	int socket;
-	struct sockaddr_in s_addr;
-} conn = {
-	"127.0.0.1",
-	7654,
-	20,
-	-1,
-	0
-};
-
-struct UDPConnection {
-	char *host;
-	int port;
-	int socket;
-	struct sockaddr_in s_addr;
-} udp = {
-	"127.0.0.1",
-	7660,
-	-1,
-	0
-};
-
 struct SystemHandlers {
 	void (*sig_alarm) ();
 	void (*sig_int) ();
@@ -83,6 +101,21 @@ struct SystemHandlers {
 
 void sigaction_init(int sig, void handler());
 
+inline int InitializeSockets() {
+	#if OS == OS_WINDOWS
+	WSADATA WsaData;
+	return WSAStartup( MAKEWORD(2,2), &WsaData ) == 1;
+	#else
+	return 1;
+	#endif
+}
+
+inline void ShutdownSockets() {
+	#if OS == OS_WINDOWS
+	WSACleanup();
+	#endif
+}
+
 int main() {
 	sigaction_init(SIGINT, handler.sig_int);
 
@@ -90,73 +123,93 @@ int main() {
 	printub("******** Welcome to CLC (Cool Little Chat)! *********\n");
 	printub("*****************************************************\n");
 	printub("*****************************************************\n");
-	printub("\nTo start chatting you must set a name to your friends recognize you\n");
 	printub("-\n");
-	printub("Print your chat-name here: ");
-	bzero(user.login, sizeof(user.login));
-	read(0, user.login, sizeof(user.login));
-	remove_nl(user.login);
-	printub("Wait for connection...\n");
-
-	conn.socket = socket(FAM, SOCK, 0);
-	if(conn.socket == -1) {
-		handler.sys_error("Socket stream connection");
+	
+	udp.socket = socket(FAM, SOCK, 0);
+	if(udp.socket == -1) {
+		handler.sys_error("Failed socket connection");
 	}
-	conn.s_addr.sin_family = FAM;
-	conn.s_addr.sin_port = htons(conn.port);
-	if(!inet_aton(conn.host, &conn.s_addr.sin_addr)) {
+	udp.address.sin_family = FAM;
+	udp.address.sin_port = htons(udp.port);
+	if(!inet_aton(udp.host, &udp.address.sin_addr)) {
 		handler.sys_error("Invalid address");
 	}
-	int trytoconnect = 0,
-		connection;
-	do {
-		connection = connect(conn.socket, (struct sockaddr*)&conn.s_addr, sizeof(conn.s_addr));
-		if(connection != -1) break;
-		// Ждем -> Закрываем и заново открываем сокет
+
+	connect(udp.socket, (struct sockaddr*)&udp.address, sizeof(udp.address));
+
+	#if OS == OS_MAC || OS == OS_UNIX
+	fcntl(udp.socket, F_SETFL, fcntl(udp.socket, F_GETFL) | O_NONBLOCK);
+    #elif OS == OS_WINDOWS
+	DWORD nonBlocking = 1;
+	ioctlsocket(handle, FIONBIO, &nonBlocking);
+    #endif
+
+	printub("Wait for connection...\n");
+	
+	// Установка соединения
+	srand(time(NULL));
+	int random_token = rand();
+
+	bzero(udp.register_token, SMALLMESSAGESSIZE);
+	itoa(random_token, udp.register_token);
+
+	char response[SMALLMESSAGESSIZE];
+	bzero(response, SMALLMESSAGESSIZE);
+	int messagecount = 0;
+	int r_bytes = -1;
+	char reg[SMALLMESSAGESSIZE];
+	while(messagecount < udp.attempt) {
+		multistrcat(reg, "REG::", udp.register_token, "\0");
+		write(udp.socket, reg, SMALLMESSAGESSIZE);
 		sleep(1);
-		close(conn.socket);
-		conn.socket = socket(FAM, SOCK, 0);
-		trytoconnect++;
-	} while (trytoconnect < conn.attempt);
-	if(connection == -1) {
-		handler.sys_error("Connection stream failed");
+		r_bytes = read(udp.socket, response, SMALLMESSAGESSIZE);
+		if(!strcmp(reg, response)) {
+			if(write(udp.socket, "SYN", 3) == -1) {
+				handler.sys_error("No synchronize with server");
+			};
+			break;
+		}
+		messagecount++;
+	}
+
+	if(messagecount == udp.attempt && r_bytes < 0 && strcmp(udp.register_token, response)) {
+		handler.sys_error("Server didn\'t send any response");
 	} else {
-		// Регистрация
-		write(conn.socket, user.login, LOGINSIZE);
-		printf("\nConnection with %s:%d established by PID - %d\n", conn.host, conn.port, getpid());
+		printf("\nConnection with %s:%d established by PID - %d\n", udp.host, udp.port, getpid());
+		// Приветствуем
+		// Отправляем логин
+		printub("\nTo start chatting you must set a name to your friends recognize you\n");
+		printub("-\n");
+		printub("Print your chat-name here: ");
+		
+		bzero(user.login, sizeof(user.login));
+		read(0, user.login, sizeof(user.login));
+		remove_nl(user.login);
+		write(udp.socket, user.login, LOGINSIZE);
+		
 		printf("You start chatting by name - %s\n\n", user.login);
 		printub("============ CHAT RIGHT NOW ============\n\n");
 	}
 
-// >>>>>>>>>>>>>>>>>> UDP >>>>>>>>>>>>>>>>>>>>>
-	
-	udp.socket = socket(FAM, SOCK_UDP, 0);
-	if(udp.socket == -1) {
-		handler.sys_error("UDP: socket connection");
-	}
-	udp.s_addr.sin_family = FAM;
-	udp.s_addr.sin_port = htons(udp.port);
-	if(!inet_aton(udp.host, &udp.s_addr.sin_addr)) {
-		handler.sys_error("Invalid address");
-	}
-	if(connect(udp.socket, (struct sockaddr*)&udp.s_addr, sizeof(udp.s_addr)) == -1) {
-		handler.sys_error("UDP connection");
-	}
-
 	if(fork() == 0) {
 		sigaction_init(SIGINT, handler.sig_stub);
-
-		char greeting[SMALLMESSAGESSIZE];
-		multistrcat(greeting, "\t\t", user.login, " join this chat\n", "\0");
-		if(write(udp.socket, greeting, SMALLMESSAGESSIZE) == -1) {
-			handler.sys_error("Write (greeting)");
-		}
-
 		char incoming[MESSAGESSIZE];
+		int max_messages = 0;
+		int timeout = 0;
 		do {
 			bzero(incoming, MESSAGESSIZE);
-			read(udp.socket, incoming, sizeof(incoming));
-			printub(incoming);
+			if(timeout > 120) {
+				// Убить текущий дочерний процесс и создать новый
+			};
+			int r_bytes = read(udp.socket, incoming, sizeof(incoming));
+			if(r_bytes == -1) {
+				timeout++;
+				sleep(1);
+				continue;
+			} else {
+				printub(incoming);
+			}
+			max_messages++;
 		} while(1);
 		exit(0);
 	}
@@ -170,8 +223,11 @@ int main() {
 		write(udp.socket, outgoing, sizeof(outgoing));
 	} while(1);
 
-	close(udp.socket);
-	close(conn.socket);
+	#if OS == OS_MAC || OS == OS_UNIX
+    close(udp.socket);
+    #elif OS == OS_WINDOWS
+    closesocket(udp.socket);
+    #endif
 	return 0;
 }
 
@@ -202,6 +258,29 @@ void multistrcat(char *str, ...) {
 		strcat(str, s_arg);
     }
 	va_end(args);
+}
+
+void itoa(int n, char s[]) {
+    int i, sign;
+    if((sign = n) < 0) /* сохраняем знак */
+        n = -n; /* делаем n положительным */
+    i = 0;
+    do { /* генерируем цифры в обратном порядке */
+        s[i++] = n % 10 + '0'; /* следующая цифра */
+    } while ((n /= 10) > 0); /* исключить ее */
+    if (sign < 0)
+        s[i++] = '-';
+    s[i] = '\0';
+    reverse(s);
+}
+
+void reverse(char s[]) {
+	int c, i, j;
+	for (i = 0, j = getsize(s) - 1; i < j; i++, j--) {
+		c = s[i];
+		s[i] = s[j];
+		s[j] = c;
+	} 
 }
 
 // Изменить на sigaction

@@ -10,8 +10,38 @@
 #include <netinet/in.h> // sockaddr_in
 #include <arpa/inet.h> // htons
 
+// platform detection
+#define OS_WINDOWS 1
+#define OS_MAC 2
+#define OS_UNIX 3
+
+#if defined(_WIN32)
+#define OS OS_WINDOWS
+#elif defined(__APPLE__)
+#define OS OS_MAC
+#else
+#define OS OS_UNIX
+#endif
+
+#if OS == OS_WINDOWS
+#include <winsock2.h>
+#elif OS == OS_MAC || OS == OS_UNIX
+#include <sys/socket.h>
+#include <netinet/in.h> // sockaddr_in
+#include <fcntl.h>
+#endif
+
+#if OS == OS_WINDOWS
+#pragma comment( lib, "wsock32.lib" )
+#endif
+
+#if OS == OS_WINDOWS
+typedef int socklen_t;
+#endif
+
 #define MAXCLIENTSSIZE 10
 #define MESSAGESSIZE 100
+#define SMALLMESSAGESSIZE 50
 #define LOGINSIZE 20
 
 void printub(const char *);
@@ -24,41 +54,29 @@ void sig_int(int);
 void sig_stub(int);
 int sys_error(char *);
 
-enum Family { FAM = AF_INET, SOCK = SOCK_STREAM, SOCK_UDP = SOCK_DGRAM };
+enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
 
-struct Server {
+struct UDPServer {
 	char * host;
 	int port;
 	int socket; // сокет для подключения
-	struct sockaddr_in s_addr;
-} server = {
-	"127.0.0.1",
-	7654,
-	-1,
-	0
-};
-
-struct ServerUDP {
-	char * host;
-	int port;
-	int socket; // сокет для подключения
-	struct sockaddr_in s_addr;
+	struct sockaddr_in address;
 } udp = {
 	"127.0.0.1",
-	7660,
+	7666,
 	-1,
-	0
+	0,
 };
 
 struct Clients {
-	int c_socket[MAXCLIENTSSIZE];
 	struct sockaddr_in c_addr[MAXCLIENTSSIZE];
 	int cur_client_size;
-	char * login[LOGINSIZE];
+	int attempt;
+	char login[MAXCLIENTSSIZE][LOGINSIZE];
 } client = {
-	-1,
 	0,
-	0
+	0,
+	10
 };
 
 struct SystemHandlers {
@@ -75,113 +93,113 @@ struct SystemHandlers {
 
 void sigaction_init(int sig, void handler());
 
-void send_to_clients(int, struct Clients, int, const char *);
+void send_to_clients(int, int, struct Clients, const char *);
 
 void send_notify(int, struct Clients, const char *);
+
+inline int InitializeSockets() {
+	#if OS == OS_WINDOWS
+	WSADATA WsaData;
+	return WSAStartup( MAKEWORD(2,2), &WsaData ) == 1;
+	#else
+	return 1;
+	#endif
+}
+
+inline void ShutdownSockets() {
+	#if OS == OS_WINDOWS
+	WSACleanup();
+	#endif
+}
 
 int main() {
 	sigaction_init(SIGALRM, handler.sig_alarm);
 	sigaction_init(SIGINT, handler.sig_int);
 
-// >>>>>>>>>>>>>>>>>> TCP >>>>>>>>>>>>>>>>>>>>>
-
-	server.socket = socket(FAM, SOCK, 0);
-	if(server.socket == -1) {
-		handler.sys_error("Socket connection");
+	int opt = 1;
+	
+	udp.socket = socket(FAM, SOCK, 0);
+	if(udp.socket == -1) {
+		handler.sys_error("Failed socket connection");
 	}
-	server.s_addr.sin_family = FAM;
-	server.s_addr.sin_port = htons(server.port);
-	if(!inet_aton(server.host, &server.s_addr.sin_addr)) {
+	udp.address.sin_family = FAM;
+	udp.address.sin_port = htons(udp.port);
+	if(!inet_aton(udp.host, &udp.address.sin_addr)) {
 		handler.sys_error("Invalid address");
 	}
-	int opt = 1;
-	setsockopt(server.socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-	if(bind(server.socket, (struct sockaddr *)&server.s_addr, sizeof(server.s_addr)) == -1) {
-		handler.sys_error("Bind connection");
-	} else {
-		printf("Server is working by PID - %d\n----------------------\n\n", getpid());
-	}
-
-// >>>>>>>>>>>>>>>>>> UDP >>>>>>>>>>>>>>>>>>>>>
-
-	udp.socket = socket(FAM, SOCK_UDP, 0);
-	if(udp.socket == -1) {
-		handler.sys_error("UDP socket connection");
-	}
-	udp.s_addr.sin_family = FAM;
-	udp.s_addr.sin_port = htons(udp.port);
-	if(!inet_aton(udp.host, &udp.s_addr.sin_addr)) {
-		handler.sys_error("UDP Invalid address");
-	}
 	setsockopt(udp.socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-	if(bind(udp.socket, (struct sockaddr *)&udp.s_addr, sizeof(udp.s_addr)) == -1) {
-		handler.sys_error("UDP bind connection");
+	if(bind(udp.socket, (struct sockaddr *)&udp.address, sizeof(udp.address)) == -1) {
+		handler.sys_error("Failed bind connection");
+	} else {
+		printf("Server is working by PID %d\n----------------------\n\n", getpid());
 	}
-
-// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-	listen(server.socket, 5);
-
-	int socket_accept;
+	
 	do {
 		if(client.cur_client_size > MAXCLIENTSSIZE) {
 			// Достигнуто макс. кол-во клиентов
 			// Отослать уведомление
 		}
-
-		char login[MESSAGESSIZE];
-		bzero(login, MESSAGESSIZE);
-		struct sockaddr_in from_addr;
-		socklen_t from_addrlen = sizeof(from_addr);
+		struct sockaddr_in from_address;
+		socklen_t from_addrlen = sizeof(from_address);
 		
-		alarm(120);
-		socket_accept = accept(server.socket, (struct sockaddr*)&from_addr, &from_addrlen);
-		if(socket_accept == -1) {
-			handler.sys_error("Accepted socket error");
+		char request[SMALLMESSAGESSIZE];
+		bzero(request, SMALLMESSAGESSIZE);
+		recvfrom(udp.socket, request, SMALLMESSAGESSIZE, 0, (struct sockaddr *)&from_address, &from_addrlen);
+		int register_port = ntohs(from_address.sin_port);
+
+		if(!strncmp(request, "REG::", 3)) {
+			printf("%s\n", request);
+			// Установка соединения
+			// Значит пришел токен, отправляем обратно
+			sendto(udp.socket, request, SMALLMESSAGESSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
+			char sync[3];
+			int messagecount = 0;
+			printf("ATT - %d\n", client.attempt);
+			while(messagecount < 10) {
+				recvfrom(udp.socket, sync, 3, 0, (struct sockaddr *)&from_address, &from_addrlen);
+				if(!strncmp(sync, "SYN", 3)) {
+					break;
+				}
+				messagecount++;
+			}
+			if(messagecount == 10 && strcmp(sync, "SYN")) {
+				continue;
+			} else {
+				// Регистрируем участника
+				// Ожидаем логин
+				recvfrom(udp.socket, client.login[client.cur_client_size], LOGINSIZE, 0, (struct sockaddr *)&from_address, &from_addrlen);
+				client.c_addr[client.cur_client_size] = from_address;
+				
+				printf("Connection with %d by login %s\n", 
+					client.c_addr[client.cur_client_size].sin_port, 
+					client.login[client.cur_client_size]);
+				client.cur_client_size++;
+				
+				// Рассылаем приветствие
+				char greeting[MESSAGESSIZE];
+				bzero(greeting, MESSAGESSIZE);
+				multistrcat(greeting, "\t\t", client.login[client.cur_client_size], " join this chat\n", "\0");
+				send_to_clients(udp.socket, client.c_addr[client.cur_client_size].sin_port, client, greeting);
+			}
 		} else {
-			read(socket_accept, login, LOGINSIZE);
-			// Регистрируем участника
-			client.login[client.cur_client_size] = malloc(LOGINSIZE);
-			strcpy(client.login[client.cur_client_size], login);
-			client.c_socket[client.cur_client_size] = socket_accept;
-			client.c_addr[client.cur_client_size] = from_addr;
-			printf("Connection with %d by login %s\n", 
-				client.c_addr[client.cur_client_size].sin_port, 
-				client.login[client.cur_client_size]);
-			client.cur_client_size++;
+			// ЧАТ
+			send_to_clients(udp.socket, register_port, client, request);
 		}
-		
-		if(fork() == 0) {
-			sigaction_init(SIGALRM, handler.sig_alarm);
-			sigaction_init(SIGINT, handler.sig_stub);
 
-			close(server.socket);
-			close(socket_accept);
-
-			int register_port;
-			char incoming[MESSAGESSIZE];
-			struct sockaddr_in from_addr;
-			socklen_t from_addrlen = sizeof(from_addr);
-			do {
-				bzero(incoming, MESSAGESSIZE);
-				alarm(120);
-				recvfrom(udp.socket, incoming, MESSAGESSIZE, 0, (struct sockaddr *)&from_addr, &from_addrlen);
-				register_port = from_addr.sin_port;
-				send_to_clients(udp.socket, client, register_port, incoming);
-			} while(1);
-			exit(0);
-		}
-// >>>>>>>>>>>>>>>>>>>>>>>>
 	} while(1);
 
-	close(udp.socket);
-	close(server.socket);
+	#if OS == OS_MAC || OS == OS_UNIX
+    close(udp.socket);
+    #elif OS == OS_WINDOWS
+    closesocket(udp.socket);
+    #endif
 	return 0;
 }
 
-void send_to_clients(int socket, struct Clients client, int register_port, const char * incoming) {
+void send_to_clients(int socket, int register_port, struct Clients client, const char * incoming) {
 	int j = 0;
 	for(;j < client.cur_client_size; j++) {
+		if(client.c_addr[j].sin_port == register_port) continue;
 		if(sendto(socket, incoming, getsize(incoming), 0, (struct sockaddr *)&client.c_addr[j], sizeof(client.c_addr[j])) == -1) {
 			handler.sys_error("Send to clients");
 		}
@@ -233,6 +251,8 @@ void sig_alarm(int sig) {
 }
 
 void sig_int(int sig) {
+	// Если сервер отключился, отправить сообщение всем клиентам
+	// и инициировать у них отключение и повторное подключение
 	char notify[] = "\t\tConnection closed\n";
 	send_notify(udp.socket, client, notify);
 	exit(0);
