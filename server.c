@@ -145,10 +145,10 @@ int main() {
 		char request[SMALLMESSAGESSIZE];
 		bzero(request, SMALLMESSAGESSIZE);
 		recvfrom(udp.socket, request, SMALLMESSAGESSIZE, 0, (struct sockaddr *)&from_address, &from_addrlen);
-		int register_port = ntohs(from_address.sin_port);
+		// int register_port = ntohs(from_address.sin_port);
+		int register_port = from_address.sin_port;
 
 		if(!strncmp(request, "REG::", 3)) {
-			printf("%s\n", request);
 			// Установка соединения
 			// Значит пришел токен, отправляем обратно
 			sendto(udp.socket, request, SMALLMESSAGESSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
@@ -173,13 +173,14 @@ int main() {
 				printf("Connection with %d by login %s\n", 
 					client.c_addr[client.cur_client_size].sin_port, 
 					client.login[client.cur_client_size]);
-				client.cur_client_size++;
 				
 				// Рассылаем приветствие
 				char greeting[MESSAGESSIZE];
 				bzero(greeting, MESSAGESSIZE);
 				multistrcat(greeting, "\t\t", client.login[client.cur_client_size], " join this chat\n", "\0");
 				send_to_clients(udp.socket, client.c_addr[client.cur_client_size].sin_port, client, greeting);
+				
+				client.cur_client_size++;
 			}
 		} else {
 			// ЧАТ
@@ -198,6 +199,7 @@ int main() {
 
 void send_to_clients(int socket, int register_port, struct Clients client, const char * incoming) {
 	int j = 0;
+	printf("PORT %d\n", register_port);
 	for(;j < client.cur_client_size; j++) {
 		if(client.c_addr[j].sin_port == register_port) continue;
 		if(sendto(socket, incoming, getsize(incoming), 0, (struct sockaddr *)&client.c_addr[j], sizeof(client.c_addr[j])) == -1) {
