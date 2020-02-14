@@ -41,7 +41,6 @@ typedef int socklen_t;
 #define MESSAGESSIZE 100
 #define SMALLMESSAGESSIZE 50
 #define LOGINSIZE 20
-#define CMDSIZE 6
 
 void printub(const char *);
 int getsize(const char *);
@@ -58,30 +57,27 @@ int sys_error(char *);
 
 enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
 
-struct UDPConnection {
+struct Connection {
 	char * host;
 	int port;
-	int attempt;
 	int socket;
 	struct sockaddr_in address;
-	char register_token[SMALLMESSAGESSIZE];
 } udp = {
 	"127.0.0.1",
 	7666,
-	10,
 	-1,
 	0
 };
 
-struct Commands {
-	char name[CMDSIZE];
-	char mail[CMDSIZE]; // сообщение нескольким адресатам
-	char exit[CMDSIZE];
-} cmd = {
-	"::name",
-	"::mail",
-	"::exit"
-};
+// struct Commands {
+// 	char name[CMDSIZE];
+// 	char mail[CMDSIZE]; // сообщение нескольким адресатам
+// 	char exit[CMDSIZE];
+// } cmd = {
+// 	"name",
+// 	"mail",
+// 	"exit"
+// };
 
 struct UserData {
 	char login[LOGINSIZE];
@@ -134,45 +130,37 @@ int main() {
 	if(!inet_aton(udp.host, &udp.address.sin_addr)) {
 		handler.sys_error("Invalid address");
 	}
-
 	connect(udp.socket, (struct sockaddr*)&udp.address, sizeof(udp.address));
-
 	#if OS == OS_MAC || OS == OS_UNIX
 	fcntl(udp.socket, F_SETFL, fcntl(udp.socket, F_GETFL) | O_NONBLOCK);
-    #elif OS == OS_WINDOWS
+	#elif OS == OS_WINDOWS
 	DWORD nonBlocking = 1;
 	ioctlsocket(handle, FIONBIO, &nonBlocking);
-    #endif
+	#endif
 
 	printub("Wait for connection...\n");
 	
 	// Установка соединения
-	srand(time(NULL));
-	int random_token = rand();
-
-	bzero(udp.register_token, SMALLMESSAGESSIZE);
-	itoa(random_token, udp.register_token);
+	// srand(time(NULL));
+	// int random_token = rand();
 
 	char response[SMALLMESSAGESSIZE];
 	bzero(response, SMALLMESSAGESSIZE);
-	int messagecount = 0;
 	int r_bytes = -1;
-	char reg[SMALLMESSAGESSIZE];
-	while(messagecount < udp.attempt) {
-		multistrcat(reg, "REG::", udp.register_token, "\0");
-		write(udp.socket, reg, SMALLMESSAGESSIZE);
+	int attempt = 10;
+	while(attempt > 0) {
+		write(udp.socket, "SYN", 3);
+		attempt--;
 		sleep(1);
 		r_bytes = read(udp.socket, response, SMALLMESSAGESSIZE);
-		if(!strcmp(reg, response)) {
-			if(write(udp.socket, "SYN", 3) == -1) {
+		if(!strcmp("ACK", response)) {
+			if(write(udp.socket, "SYN-ACK", 7) == -1) {
 				handler.sys_error("No synchronize with server");
 			};
 			break;
 		}
-		messagecount++;
 	}
-
-	if(messagecount == udp.attempt && r_bytes < 0 && strcmp(udp.register_token, response)) {
+	if(attempt == 0 && r_bytes < 0 && strcmp("ACK", response)) {
 		handler.sys_error("Server didn\'t send any response");
 	} else {
 		printf("\nConnection with %s:%d established by PID - %d\n", udp.host, udp.port, getpid());
@@ -204,7 +192,7 @@ int main() {
 			int r_bytes = read(udp.socket, incoming, sizeof(incoming));
 			if(r_bytes == -1) {
 				timeout++;
-				sleep(1);
+				usleep(500);
 				continue;
 			} else {
 				printub(incoming);

@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <sys/wait.h>
 #include <sys/socket.h>
 #include <netinet/in.h> // sockaddr_in
 #include <arpa/inet.h> // htons
@@ -41,7 +42,6 @@ typedef int socklen_t;
 
 #define MAXCLIENTSSIZE 10
 #define MESSAGESSIZE 100
-#define SMALLMESSAGESSIZE 50
 #define LOGINSIZE 20
 
 void printub(const char *);
@@ -56,7 +56,9 @@ int sys_error(char *);
 
 enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
 
-struct UDPServer {
+enum Handshake { SYN = 1, ACK = 2 };
+
+struct Connection {
 	char * host;
 	int port;
 	int socket; // сокет для подключения
@@ -71,12 +73,10 @@ struct UDPServer {
 struct Clients {
 	struct sockaddr_in c_addr[MAXCLIENTSSIZE];
 	int cur_client_size;
-	int attempt;
 	char login[MAXCLIENTSSIZE][LOGINSIZE];
 } client = {
 	0,
-	0,
-	10
+	0
 };
 
 struct SystemHandlers {
@@ -117,7 +117,6 @@ int main() {
 	sigaction_init(SIGINT, handler.sig_int);
 
 	int opt = 1;
-	
 	udp.socket = socket(FAM, SOCK, 0);
 	if(udp.socket == -1) {
 		handler.sys_error("Failed socket connection");
@@ -139,30 +138,33 @@ int main() {
 			// Достигнуто макс. кол-во клиентов
 			// Отослать уведомление
 		}
+
 		struct sockaddr_in from_address;
 		socklen_t from_addrlen = sizeof(from_address);
 		
-		char request[SMALLMESSAGESSIZE];
-		bzero(request, SMALLMESSAGESSIZE);
-		recvfrom(udp.socket, request, SMALLMESSAGESSIZE, 0, (struct sockaddr *)&from_address, &from_addrlen);
-		// int register_port = ntohs(from_address.sin_port);
-		int register_port = from_address.sin_port;
-
-		if(!strncmp(request, "REG::", 3)) {
+		char request[MESSAGESSIZE];
+		bzero(request, MESSAGESSIZE);
+		recvfrom(udp.socket, request, MESSAGESSIZE, 0, (struct sockaddr *)&from_address, &from_addrlen);
+		
+		int register_port = ntohs(from_address.sin_port);
+		int attempt = 10;
+		if(!strcmp(request, "SYN")) {
 			// Установка соединения
-			// Значит пришел токен, отправляем обратно
-			sendto(udp.socket, request, SMALLMESSAGESSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
-			char sync[3];
-			int messagecount = 0;
-			printf("ATT - %d\n", client.attempt);
-			while(messagecount < 10) {
-				recvfrom(udp.socket, sync, 3, 0, (struct sockaddr *)&from_address, &from_addrlen);
-				if(!strncmp(sync, "SYN", 3)) {
-					break;
+			if(fork() == 0) {
+				sigaction_init(SIGINT, handler.sig_stub);
+				sendto(udp.socket, "ACK", 3, 0, (struct sockaddr *)&from_address, from_addrlen);
+				bzero(request, MESSAGESSIZE);
+				while(attempt > 0) {
+					recvfrom(udp.socket, request, 7, 0, (struct sockaddr *)&from_address, &from_addrlen);
+					if(!strncmp(request, "SYN-ACK", 7)) {
+						break;
+					}
+					attempt--;
 				}
-				messagecount++;
+				exit(0);
 			}
-			if(messagecount == 10 && strcmp(sync, "SYN")) {
+			wait(NULL);
+			if(attempt == 0 && strcmp(request, "SYN-ACK")) {
 				continue;
 			} else {
 				// Регистрируем участника
@@ -199,9 +201,9 @@ int main() {
 
 void send_to_clients(int socket, int register_port, struct Clients client, const char * incoming) {
 	int j = 0;
-	printf("PORT %d\n", register_port);
 	for(;j < client.cur_client_size; j++) {
-		if(client.c_addr[j].sin_port == register_port) continue;
+		int client_port = ntohs(client.c_addr[j].sin_port);
+		if(client_port == register_port) continue;
 		if(sendto(socket, incoming, getsize(incoming), 0, (struct sockaddr *)&client.c_addr[j], sizeof(client.c_addr[j])) == -1) {
 			handler.sys_error("Send to clients");
 		}
