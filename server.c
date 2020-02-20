@@ -43,6 +43,7 @@ typedef int socklen_t;
 #define MAXCLIENTSSIZE 10
 #define MESSAGESSIZE 100
 #define LOGINSIZE 20
+#define FILENAME "./list"
 
 void printub(const char *);
 int getsize(const char *);
@@ -54,28 +55,30 @@ void sig_int(int);
 void sig_stub(int);
 int sys_error(char *);
 
-enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
-
-enum Handshake { SYN = 1, ACK = 2 };
+enum Family { FAM = AF_INET, SOCKD = SOCK_DGRAM, SOCKS = SOCK_STREAM };
 
 struct Connection {
-	char * host;
+	char *host;
 	int port;
-	int socket; // сокет для подключения
+	int socket;
 	struct sockaddr_in address;
-} udp = {
+} tcp = {
 	"127.0.0.1",
-	7666,
+	7660,
 	-1,
-	0,
+	0
+}, udp = {
+	"127.0.0.1",
+	7661,
+	-1,
+	0
 };
 
 struct Clients {
-	struct sockaddr_in c_addr[MAXCLIENTSSIZE];
 	int cur_client_size;
+	struct sockaddr_in c_addr[MAXCLIENTSSIZE];
 	char login[MAXCLIENTSSIZE][LOGINSIZE];
 } client = {
-	0,
 	0
 };
 
@@ -92,6 +95,10 @@ struct SystemHandlers {
 };
 
 void sigaction_init(int sig, void handler());
+
+void save_client(struct Clients *);
+
+void load_client(struct Clients *);
 
 void send_to_clients(int, int, struct Clients, const char *);
 
@@ -117,7 +124,22 @@ int main() {
 	sigaction_init(SIGINT, handler.sig_int);
 
 	int opt = 1;
-	udp.socket = socket(FAM, SOCK, 0);
+	// TCP
+	tcp.socket = socket(FAM, SOCKS, 0);
+	if(tcp.socket == -1) {
+		handler.sys_error("Failed socket connection");
+	}
+	tcp.address.sin_family = FAM;
+	tcp.address.sin_port = htons(tcp.port);
+	if(!inet_aton(tcp.host, &tcp.address.sin_addr)) {
+		handler.sys_error("Invalid address");
+	}
+	setsockopt(tcp.socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	if(bind(tcp.socket, (struct sockaddr *)&tcp.address, sizeof(tcp.address)) == -1) {
+		handler.sys_error("Failed bind TCP connection");
+	}
+	// UDP
+	udp.socket = socket(FAM, SOCKD, 0);
 	if(udp.socket == -1) {
 		handler.sys_error("Failed socket connection");
 	}
@@ -128,89 +150,111 @@ int main() {
 	}
 	setsockopt(udp.socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 	if(bind(udp.socket, (struct sockaddr *)&udp.address, sizeof(udp.address)) == -1) {
-		handler.sys_error("Failed bind connection");
-	} else {
-		printf("Server is working by PID %d\n----------------------\n\n", getpid());
+		handler.sys_error("Failed bind UDP connection");
 	}
-	
-	do {
-		if(client.cur_client_size > MAXCLIENTSSIZE) {
-			// Достигнуто макс. кол-во клиентов
-			// Отослать уведомление
-		}
+	// ...
+	printf("Server is working\n\n");
 
+	// Создаем дочерний процесс под общение
+	if(fork() == 0) {
+		sigaction_init(SIGINT, handler.sig_stub);
+		close(tcp.socket);
 		struct sockaddr_in from_address;
 		socklen_t from_addrlen = sizeof(from_address);
-		
-		char request[MESSAGESSIZE];
-		bzero(request, MESSAGESSIZE);
-		recvfrom(udp.socket, request, MESSAGESSIZE, 0, (struct sockaddr *)&from_address, &from_addrlen);
-		
-		int register_port = ntohs(from_address.sin_port);
-		int attempt = 10;
-		if(!strcmp(request, "SYN")) {
-			// Установка соединения
-			if(fork() == 0) {
-				sigaction_init(SIGINT, handler.sig_stub);
-				sendto(udp.socket, "ACK", 3, 0, (struct sockaddr *)&from_address, from_addrlen);
-				bzero(request, MESSAGESSIZE);
-				while(attempt > 0) {
-					recvfrom(udp.socket, request, 7, 0, (struct sockaddr *)&from_address, &from_addrlen);
-					if(!strncmp(request, "SYN-ACK", 7)) {
-						break;
-					}
-					attempt--;
-				}
-				exit(0);
-			}
-			wait(NULL);
-			if(attempt == 0 && strcmp(request, "SYN-ACK")) {
-				continue;
-			} else {
-				// Регистрируем участника
-				// Ожидаем логин
-				recvfrom(udp.socket, client.login[client.cur_client_size], LOGINSIZE, 0, (struct sockaddr *)&from_address, &from_addrlen);
-				client.c_addr[client.cur_client_size] = from_address;
-				
-				printf("Connection with %d by login %s\n", 
-					client.c_addr[client.cur_client_size].sin_port, 
-					client.login[client.cur_client_size]);
-				
-				// Рассылаем приветствие
-				char greeting[MESSAGESSIZE];
-				bzero(greeting, MESSAGESSIZE);
-				multistrcat(greeting, "\t\t", client.login[client.cur_client_size], " join this chat\n", "\0");
-				send_to_clients(udp.socket, client.c_addr[client.cur_client_size].sin_port, client, greeting);
-				
-				client.cur_client_size++;
-			}
-		} else {
-			// ЧАТ
-			send_to_clients(udp.socket, register_port, client, request);
+		while(1) {
+			memset(&from_address, '\0', from_addrlen);
+			char request[MESSAGESSIZE];
+			memset(request, '\0', MESSAGESSIZE);
+			recvfrom(udp.socket, request, MESSAGESSIZE, 0, (struct sockaddr *)&from_address, &from_addrlen);
+			load_client(&client);
+			send_to_clients(udp.socket, from_address.sin_port, client, request);
 		}
-
-	} while(1);
+		close(udp.socket);
+		exit(0);
+	}
+	
+	listen(tcp.socket, 5);
+	int acc;
+	while(1) {
+		// Ожидаем подключения
+		acc = accept(tcp.socket, 0, 0);
+		// ...
+		// Клиент подключился
+		// Создаем данные под сохранение
+		char login[LOGINSIZE];
+		struct sockaddr_in from_address;
+		socklen_t from_addrlen = sizeof(from_address);
+		memset(login, '\0', LOGINSIZE);
+		memset(&from_address, '\0', from_addrlen);
+		// Ожидаем логина
+		recvfrom(udp.socket, login, LOGINSIZE, 0, (struct sockaddr *)&from_address, &from_addrlen);
+		// Сохраняем данные в памяти для последующего сохранения в файл
+		memcpy(client.login[client.cur_client_size], login, LOGINSIZE);
+		memcpy(&client.c_addr[client.cur_client_size], &from_address, from_addrlen);
+		
+		printf("Connection with %s\n", client.login[client.cur_client_size]);
+		// Сохраняем данные в файл
+		save_client(&client);
+		// Увеличиваем счетчик клиентов
+		client.cur_client_size++;
+	}
 
 	#if OS == OS_MAC || OS == OS_UNIX
+	close(acc);
+	close(tcp.socket);
     close(udp.socket);
     #elif OS == OS_WINDOWS
+	closesocket(acc);
+    closesocket(tcp.socket);
     closesocket(udp.socket);
     #endif
 	return 0;
 }
 
-void send_to_clients(int socket, int register_port, struct Clients client, const char * incoming) {
+void save_client(struct Clients *client) {
+	char *c;
+    int clientsize = sizeof(struct Clients);
+	FILE *fc = fopen(FILENAME, "wb");
+	if(fc == NULL) {
+		handler.sys_error("File");
+	}
+	c = (char *)client;
+    // посимвольно записываем в файл структуру
+    for (int i = 0; i < clientsize; i++) {
+        putc(*c++, fc);
+    }
+    fclose(fc);
+}
+
+void load_client(struct Clients *client) {
+    char *c;
+    int sym;
+    int clientsize = sizeof(struct Clients);
+ 
+    FILE *fc = fopen(FILENAME, "rb");
+	if(fc == NULL) {
+		handler.sys_error("File");
+	}
+    c = (char *)client;
+    while ((sym = getc(fc)) != EOF) {
+        *c = sym;
+        c++;
+    }
+    fclose(fc);
+}
+
+void send_to_clients(int socket, int register_port, struct Clients client, const char *incoming) {
 	int j = 0;
-	for(;j < client.cur_client_size; j++) {
-		int client_port = ntohs(client.c_addr[j].sin_port);
-		if(client_port == register_port) continue;
-		if(sendto(socket, incoming, getsize(incoming), 0, (struct sockaddr *)&client.c_addr[j], sizeof(client.c_addr[j])) == -1) {
+	int s_bytes;
+	for(;j <= client.cur_client_size; j++) {
+		if(client.c_addr[j].sin_port == register_port) continue;
+		if((s_bytes = sendto(socket, incoming, getsize(incoming), 0, (struct sockaddr *)&client.c_addr[j], sizeof(struct sockaddr))) == -1) {
 			handler.sys_error("Send to clients");
 		}
 	}
 }
 
-void send_notify(int socket, struct Clients client, const char * incoming) {
+void send_notify(int socket, struct Clients client, const char *incoming) {
 	int j = 0;
 	for(;j < client.cur_client_size; j++) {
 		if(sendto(socket, incoming, getsize(incoming), 0, (struct sockaddr *)&client.c_addr[j], sizeof(client.c_addr[j])) == -1) {
@@ -278,18 +322,15 @@ void sigaction_init(int sig, void handler()) {
 	sigaction(sig, &act, 0);
 }
 
-int sys_error(char * msg) {
+int sys_error(char *msg) {
+	#if OS == OS_MAC || OS == OS_UNIX
+	close(tcp.socket);
+    close(udp.socket);
+    #elif OS == OS_WINDOWS
+    closesocket(tcp.socket);
+    closesocket(udp.socket);
+    #endif
 	perror(msg);
 	exit(1);
 }
 
-void close_sockets(int num, ...) {
-	va_list args;
-    va_start(args, num);
-	int sock;
-	while ((sock = va_arg(args, int)) && num != 0) {
-		close(sock);
-		num--;
-    }
-	va_end(args);
-}

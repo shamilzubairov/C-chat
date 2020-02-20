@@ -55,16 +55,21 @@ void sig_stub(int);
 
 int sys_error(char *);
 
-enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
+enum Family { FAM = AF_INET, SOCKD = SOCK_DGRAM, SOCKS = SOCK_STREAM };
 
 struct Connection {
 	char * host;
 	int port;
 	int socket;
 	struct sockaddr_in address;
-} udp = {
+} tcp = {
 	"127.0.0.1",
-	7666,
+	7660,
+	-1,
+	0
+}, udp = {
+	"127.0.0.1",
+	7661,
 	-1,
 	0
 };
@@ -120,8 +125,48 @@ int main() {
 	printub("*****************************************************\n");
 	printub("*****************************************************\n");
 	printub("-\n");
-	
-	udp.socket = socket(FAM, SOCK, 0);
+	// TCP
+	tcp.socket = socket(FAM, SOCKS, 0);
+	if(tcp.socket == -1) {
+		handler.sys_error("Failed socket connection");
+	}
+	tcp.address.sin_family = FAM;
+	tcp.address.sin_port = htons(tcp.port);
+	if(!inet_aton(tcp.host, &tcp.address.sin_addr)) {
+		handler.sys_error("Invalid address");
+	}
+	#if OS == OS_MAC || OS == OS_UNIX
+	fcntl(tcp.socket, F_SETFL, fcntl(tcp.socket, F_GETFL) | O_NONBLOCK);
+	#elif OS == OS_WINDOWS
+	DWORD nonBlocking = 1;
+	ioctlsocket(handle, FIONBIO, &nonBlocking);
+	#endif
+
+	printub("Wait for connection...\n");
+
+	int attempt = 10;
+	int flg;
+	while(attempt > 0) {
+		flg = connect(tcp.socket, (struct sockaddr*)&tcp.address, sizeof(tcp.address));
+		attempt--;
+		if(flg > -1) {
+			printf("\nConnection with %s:%d established by PID - %d\n", tcp.host, tcp.port, getpid());
+			printub("\nTo start chatting you must set a name to your friends recognize you\n");
+			printub("-\n");
+			printub("Print your chat-name here: ");
+			break;
+		} else {
+			close(tcp.socket);
+			sleep(1);
+			tcp.socket = socket(FAM, SOCKS, 0);
+		}
+	}
+	if(attempt == 0 && flg < 0) {
+		handler.sys_error("Server didn\'t send any response");
+	}
+	close(tcp.socket);
+	// UDP
+	udp.socket = socket(FAM, SOCKD, 0);
 	if(udp.socket == -1) {
 		handler.sys_error("Failed socket connection");
 	}
@@ -138,46 +183,13 @@ int main() {
 	ioctlsocket(handle, FIONBIO, &nonBlocking);
 	#endif
 
-	printub("Wait for connection...\n");
-	
-	// Установка соединения
-	// srand(time(NULL));
-	// int random_token = rand();
+	bzero(user.login, sizeof(user.login));
+	read(0, user.login, sizeof(user.login));
+	remove_nl(user.login);
+	write(udp.socket, user.login, LOGINSIZE);
 
-	char response[SMALLMESSAGESSIZE];
-	bzero(response, SMALLMESSAGESSIZE);
-	int r_bytes = -1;
-	int attempt = 10;
-	while(attempt > 0) {
-		write(udp.socket, "SYN", 3);
-		attempt--;
-		sleep(1);
-		r_bytes = read(udp.socket, response, SMALLMESSAGESSIZE);
-		if(!strcmp("ACK", response)) {
-			if(write(udp.socket, "SYN-ACK", 7) == -1) {
-				handler.sys_error("No synchronize with server");
-			};
-			break;
-		}
-	}
-	if(attempt == 0 && r_bytes < 0 && strcmp("ACK", response)) {
-		handler.sys_error("Server didn\'t send any response");
-	} else {
-		printf("\nConnection with %s:%d established by PID - %d\n", udp.host, udp.port, getpid());
-		// Приветствуем
-		// Отправляем логин
-		printub("\nTo start chatting you must set a name to your friends recognize you\n");
-		printub("-\n");
-		printub("Print your chat-name here: ");
-		
-		bzero(user.login, sizeof(user.login));
-		read(0, user.login, sizeof(user.login));
-		remove_nl(user.login);
-		write(udp.socket, user.login, LOGINSIZE);
-		
-		printf("You start chatting by name - %s\n\n", user.login);
-		printub("============ CHAT RIGHT NOW ============\n\n");
-	}
+	printf("You start chatting by name - %s\n\n", user.login);
+	printub("============ CHAT RIGHT NOW ============\n\n");
 
 	if(fork() == 0) {
 		sigaction_init(SIGINT, handler.sig_stub);
@@ -301,6 +313,11 @@ void sigaction_init(int sig, void handler()) {
 }
 
 int sys_error(char * msg) {
+	#if OS == OS_MAC || OS == OS_UNIX
+    close(udp.socket);
+    #elif OS == OS_WINDOWS
+    closesocket(udp.socket);
+    #endif
 	perror(msg);
 	exit(1);
 }
