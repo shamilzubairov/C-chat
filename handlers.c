@@ -8,10 +8,6 @@ void sig_alarm(int sig) {
 }
 
 void sig_int(int sig) {
-	// Если сервер отключился, отправить сообщение всем клиентам
-	// и инициировать у них отключение и повторное подключение
-	// char notify[] = "\t\tConnection closed\n";
-	// send_notify(udp.socket, client, notify);
 	exit(0);
 }
 
