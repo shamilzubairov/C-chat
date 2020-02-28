@@ -35,6 +35,11 @@ struct Message {
 	char command[10]; // name, group, exit ...
 } msg;
 
+struct ServerMessage {
+	char type[20]; // open, close
+	char message[MSGSIZE];
+} s_msg;
+
 void Connect(struct Connection *);
 
 void Closed();
@@ -48,6 +53,8 @@ void save_client(const char *, struct sockaddr_in *, int);
 void load_clients(const char *, struct sockaddr_in []);
 
 void send_to_clients(int, struct sockaddr_in [], const char []);
+
+void convert_to_string(void *, char [], int);
 
 int main() {
 	sigaction_init(SIGALRM, handler.sig_alarm);
@@ -78,6 +85,8 @@ int main() {
 			// Достигнуто макс. кол-во клиентов
 			// Отослать уведомление
 		}
+		load_clients(FCLIENTS, clients);
+
 		bzero(incoming, BUFSIZE);
 		bzero(outgoing, BUFSIZE);
 		bzero(&from_address, from_addrlen);
@@ -88,8 +97,6 @@ int main() {
 		strcpy(msg.login, ((struct Message *)incoming)->login);
 		strcpy(msg.message, ((struct Message *)incoming)->message);
 		strcpy(msg.command, ((struct Message *)incoming)->command);
-
-		load_clients(FCLIENTS, clients);
 
 		if(!strcmp(msg.type, "message")) {
 			printf("===CHAT===\n");
@@ -111,6 +118,7 @@ int main() {
 					udp.host,
 					htons(udp.port)
 				);
+				// convert_to_string(&s_msg, outgoing, BUFSIZE);
 				sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
 				
 				// ...и файл с предыдущими сообщениями
@@ -221,4 +229,11 @@ void send_to_clients(int socket, struct sockaddr_in clients[], const char messag
 	}
 }
 
-
+void convert_to_string(void *msg, char request[], int size) {
+	char *c;
+	c = (char *)msg;
+	// посимвольно записываем структуру в сообщение
+	for (int i = 0; i < size; i++) {
+		memset(request + i, *(c + i), 1);
+	}
+}

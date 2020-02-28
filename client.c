@@ -37,6 +37,11 @@ struct Message {
 	char command[10];
 } msg;
 
+struct ServerMessage {
+	char type[20]; // open, close
+	char message[MSGSIZE];
+} s_msg;
+
 void Connect(struct Connection *);
 
 void convert_to_string(void *, char [], int);
@@ -79,9 +84,9 @@ int main() {
 	printf("Wait for connection...\n");
 
 	// Ждать ответа от сервера ...
-	// alarm(60);
-	// sigaction_init(SIGALRM, handler.sig_alarm);
-	read(udp.socket, incoming, BUFSIZE);
+	if(read(udp.socket, incoming, BUFSIZE) == -1) {
+		handler.sys_error("Server connection");
+	}
 
 	printub(incoming);
 	
@@ -123,11 +128,10 @@ void Connect(struct Connection *conn) {
 	if(!inet_aton(conn->host, &(conn->address.sin_addr))) {
 		handler.sys_error("Invalid address");
 	}
-
+	connect(conn->socket, (struct sockaddr*)&(conn->address), sizeof(conn->address));
+	
 	int opt = 1;
 	setsockopt(conn->socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
-	connect(conn->socket, (struct sockaddr*)&(conn->address), sizeof(conn->address));
 }
 
 void convert_to_string(void *msg, char request[], int size) {
