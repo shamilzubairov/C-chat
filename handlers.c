@@ -1,7 +1,6 @@
 #include "inc.h"
 #include "handlers.h"
 
-// Изменить на sigaction
 void sig_alarm(int sig) {
 	printf("Alarm::socket didn\'t get any response\n");
 	exit(1);
