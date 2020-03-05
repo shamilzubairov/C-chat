@@ -66,7 +66,7 @@ int main() {
 	struct sockaddr_in from_address;
 	socklen_t from_addrlen = sizeof(struct sockaddr_in);
 	
-	// Очищаем файл
+	// Очищаем файлы
 	FILE *fc = fopen(FCLIENTS, "w");
 	fclose(fc);
 	FILE *fm = fopen(FMESSAGES, "w");
