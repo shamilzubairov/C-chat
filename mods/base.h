@@ -11,7 +11,7 @@ void multistrcat(char *, ...);
 #define MSGSIZE 100
 #define LOGSIZE 20
 #define BUFSIZE (MSGSIZE + LOGSIZE + 30)
-#define FCLIENTS "./db/participants"
-#define FMESSAGES "./db/messages"
+#define FILECLIENTS "./db/participants"
+#define FILEMESSAGES "./db/messages"
 
 #endif
