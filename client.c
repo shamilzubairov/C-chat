@@ -1,6 +1,6 @@
-#include "inc.h"
-#include "base.h"
-#include "handlers.h"
+#include "mods/inc.h"
+#include "mods/base.h"
+#include "mods/handlers.h"
 
 struct SystemHandlers {
 	void (*sig_alarm) ();
@@ -120,6 +120,8 @@ int main() {
 
 void Connect(struct Connection *conn) {
 	conn->socket = socket(FAM, SOCK, 0);
+	int opt = 1;
+	setsockopt(conn->socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 	if(conn->socket == -1) {
 		handler.sys_error("Failed socket connection");
 	}
@@ -129,9 +131,6 @@ void Connect(struct Connection *conn) {
 		handler.sys_error("Invalid address");
 	}
 	connect(conn->socket, (struct sockaddr*)&(conn->address), sizeof(conn->address));
-	
-	int opt = 1;
-	setsockopt(conn->socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 }
 
 void convert_to_string(void *msg, char request[], int size) {

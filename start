@@ -1,0 +1,8 @@
+#!/bin/bash
+
+if ! [ -d db/ ]; then
+mkdir db
+fi
+
+make clean
+make compile

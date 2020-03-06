@@ -1,6 +1,6 @@
 CC = gcc # по-умолчанию cc
 CFLAGS = -g -Wall -O0
-SRCMODS = base.c handlers.c
+SRCMODS = mods/base.c mods/handlers.c
 OBJMODS = $(SRCMODS:.c=.o)
 
 # $@ - имя текущей цели
@@ -15,7 +15,6 @@ client: client.c $(OBJMODS)
 
 server: server.c $(OBJMODS)
 	$(CC)$(CFLAGS) $^ -o $@
-	mkdir db
 
 compile: server client
 
@@ -23,5 +22,5 @@ runServ: server
 	./server
 	
 clean:
-	rm -f *.o server client
+	rm -f */**.o server client
 	rm -rf db
