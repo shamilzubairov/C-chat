@@ -47,7 +47,9 @@ void save_messages(const char *, const char *);
 
 void load_messages(const char *, char *);
 
-void save_client(const char *, struct sockaddr_in *, int);
+void add_new_client(const char *, struct sockaddr_in *, int);
+
+void save_clients(const char *, struct sockaddr_in []);
 
 void load_clients(const char *, struct sockaddr_in []);
 
@@ -132,8 +134,25 @@ int main() {
 			multistrcat(server_buffer.message, "\t\t", client_buffer.login, " join this chat\n", "\0");
 			convert_to_string(&server_buffer, outgoing, BUFSIZE);
 			send_to_clients(udp.socket, clients, outgoing);
-			save_client(FILECLIENTS, &from_address, from_addrlen);
+			add_new_client(FILECLIENTS, &from_address, from_addrlen);
 			current_clients_size++;
+		} else if(!strcmp(client_buffer.type, "close")) {
+			int i = 0, j = 0;
+			while(clients[i].sin_port) {
+				if(clients[i].sin_port == from_address.sin_port) {
+					j = i;
+					while(clients[j + 1].sin_port) {
+						memcpy(&clients[j], &(clients[j + 1]), sizeof(struct sockaddr));
+						j++;
+					}
+					memset(&clients[j], '\0', sizeof(struct sockaddr));
+					break;
+				}
+				i++;
+			}
+			save_clients(FILECLIENTS, clients);
+		} else {
+			printf("NO MATCH TYPE IN BUFFER\n");
 		}
 
 	} while(1);
@@ -194,7 +213,7 @@ void load_messages(const char *filename, char *outgoing) {
 	}
 }
 
-void save_client(const char *filename, struct sockaddr_in *client, int clientsize) {
+void add_new_client(const char *filename, struct sockaddr_in *client, int clientsize) {
 	char *c;
 	FILE *fc = fopen(filename, "ab");
 	if(fc == NULL) {
@@ -203,6 +222,20 @@ void save_client(const char *filename, struct sockaddr_in *client, int clientsiz
 	c = (char *)client;
     // посимвольно записываем в файл структуру
     for (int i = 0; i < clientsize; i++) {
+        putc(*c++, fc);
+    }
+    fclose(fc);
+}
+
+void save_clients(const char *filename, struct sockaddr_in clients[]) {
+	char *c;
+	FILE *fc = fopen(filename, "wb");
+	if(fc == NULL) {
+		handler.sys_error("File");
+	}
+	c = (char *)clients;
+    // посимвольно записываем в файл структуру
+	while (*c) {
         putc(*c++, fc);
     }
     fclose(fc);

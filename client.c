@@ -43,10 +43,12 @@ struct ServerBuffer {
 
 void Connect(struct Connection *);
 
+void Close_connection();
+
 void convert_to_string(void *, char [], int);
 
 int main() {
-    sigaction_init(SIGINT, handler.sig_int);
+	sigaction_init(SIGINT, Close_connection);
 
 	char reading[BUFSIZE];
 	char incoming[BUFSIZE];
@@ -93,6 +95,7 @@ int main() {
 
 	if(fork() == 0) {
 		sigaction_init(SIGINT, handler.sig_stub);
+		sigaction_init(SIGALRM, handler.sig_alarm);
 		do {
 			bzero(incoming, BUFSIZE);
 			read(udp.socket, incoming, BUFSIZE);
@@ -101,8 +104,8 @@ int main() {
 			if(!strcmp(server_buffer.type, "open")) {
 				printub(server_buffer.message);
 			} else if(!strcmp(server_buffer.type, "close")) {
-				printf("CLOSE CONNECTION\n");
 				printub(server_buffer.message);
+				alarm(1);
 			}
 		} while(1);
 		exit(0);
@@ -136,6 +139,16 @@ void Connect(struct Connection *conn) {
 	host_address.sin_addr.s_addr = INADDR_ANY;
 	memset(&(host_address.sin_zero), '\0', 8);
 	connect(conn->socket, (struct sockaddr*)&host_address, sizeof(host_address));
+}
+
+void Close_connection() {
+	// Если сервер отключился, отправить сообщение всем клиентам
+	// и инициировать у них отключение и повторное подключение
+	char notify[BUFSIZE];
+	strcpy(client_buffer.type, "close");
+	convert_to_string(&client_buffer, notify, BUFSIZE);
+	write(udp.socket, notify, BUFSIZE);
+	handler.sig_int(SIGINT);
 }
 
 void convert_to_string(void *buffer, char request[], int size) {
