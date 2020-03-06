@@ -17,12 +17,10 @@ struct SystemHandlers {
 enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
 
 struct Connection {
-	char *host;
+	short socket;
 	int port;
-	int socket;
-	struct sockaddr_in address;
 } udp = {
-	"127.0.0.1",
+	-1,
 	7654
 };
 
@@ -30,17 +28,18 @@ struct UserData {
 	char login[LOGSIZE];
 } user;
 
-struct Message {
+struct ClientBuffer {
 	char type[20];
 	char login[LOGSIZE];
 	char message[MSGSIZE];
 	char command[10];
-} msg;
+} client_buffer;
 
-struct ServerMessage {
+struct ServerBuffer {
 	char type[20]; // open, close
 	char message[MSGSIZE];
-} s_msg;
+	char zero[30]; // для конвертации строки к struct ServerBuffer
+} server_buffer;
 
 void Connect(struct Connection *);
 
@@ -57,17 +56,17 @@ int main() {
 	bzero(reading, BUFSIZE);
 	bzero(incoming, BUFSIZE);
 	bzero(outgoing, BUFSIZE);
+	memset(server_buffer.zero, '\0', 30);
 
 	printf("\n*****************************************************\n");
 	printf("******** Welcome to CLC (Cool Little Chat)! *********\n");
 	printf("*****************************************************\n");
 	printf("*****************************************************\n");
 	printf("-\n");
+
 	
 	Connect(&udp);
 
-	// Приветствуем
-	// Отправляем логин
 	printf("To start chatting you must input your login so that your friends could write you\n");
 	printf("-\n");
 	printub("Print your login here: ");
@@ -75,20 +74,20 @@ int main() {
 	read(0, user.login, sizeof(user.login));
 	remove_nl(user.login);
 	
-	strcpy(msg.type, "register");
-	strcpy(msg.login, user.login);
-
-	convert_to_string(&msg, outgoing, BUFSIZE); // void (src, dest, size_of_dest)
-    write(udp.socket, outgoing, BUFSIZE);
+	strcpy(client_buffer.type, "register");
+	strcpy(client_buffer.login, user.login);
+	convert_to_string(&client_buffer, outgoing, BUFSIZE); // void (src, dest, size_of_dest)
+	write(udp.socket, outgoing, BUFSIZE);
 
 	printf("Wait for connection...\n");
 
-	// Ждать ответа от сервера ...
 	if(read(udp.socket, incoming, BUFSIZE) == -1) {
 		handler.sys_error("Server connection");
 	}
+	strcpy(server_buffer.type, ((struct ServerBuffer *)incoming)->type);
+	strcpy(server_buffer.message, ((struct ServerBuffer *)incoming)->message);
 
-	printub(incoming);
+	printub(server_buffer.message);
 	
 	printf("\n============ HELLO, %s ============\n\n", user.login);
 
@@ -97,45 +96,51 @@ int main() {
 		do {
 			bzero(incoming, BUFSIZE);
 			read(udp.socket, incoming, BUFSIZE);
-            printub(incoming);
+			strcpy(server_buffer.type, ((struct ServerBuffer *)incoming)->type);
+			strcpy(server_buffer.message, ((struct ServerBuffer *)incoming)->message);
+			if(!strcmp(server_buffer.type, "open")) {
+				printub(server_buffer.message);
+			} else if(!strcmp(server_buffer.type, "close")) {
+				printf("CLOSE CONNECTION\n");
+				printub(server_buffer.message);
+			}
 		} while(1);
 		exit(0);
 	}
 
-	strcpy(msg.type, "message");
+	strcpy(client_buffer.type, "message");
 	do {
 		bzero(reading, BUFSIZE);
 		bzero(outgoing, BUFSIZE);
 		read(0, reading, sizeof(reading));
-		strcpy(msg.message, reading);
-
-		convert_to_string(&msg, outgoing, BUFSIZE);
+		strcpy(client_buffer.message, reading);
+		convert_to_string(&client_buffer, outgoing, BUFSIZE);
 		write(udp.socket, outgoing, BUFSIZE);
 	} while(1);
 
-	close(udp.socket);
+	shutdown(udp.socket, SHUT_RDWR);
 
     return 0;
 }
 
 void Connect(struct Connection *conn) {
+	struct sockaddr_in host_address;
 	conn->socket = socket(FAM, SOCK, 0);
 	int opt = 1;
 	setsockopt(conn->socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 	if(conn->socket == -1) {
 		handler.sys_error("Failed socket connection");
 	}
-	conn->address.sin_family = FAM;
-	conn->address.sin_port = htons(conn->port);
-	if(!inet_aton(conn->host, &(conn->address.sin_addr))) {
-		handler.sys_error("Invalid address");
-	}
-	connect(conn->socket, (struct sockaddr*)&(conn->address), sizeof(conn->address));
+	host_address.sin_family = FAM;
+	host_address.sin_port = htons(conn->port);
+	host_address.sin_addr.s_addr = INADDR_ANY;
+	memset(&(host_address.sin_zero), '\0', 8);
+	connect(conn->socket, (struct sockaddr*)&host_address, sizeof(host_address));
 }
 
-void convert_to_string(void *msg, char request[], int size) {
+void convert_to_string(void *buffer, char request[], int size) {
 	char *c;
-	c = (char *)msg;
+	c = (char *)buffer;
 	// посимвольно записываем структуру в сообщение
 	for (int i = 0; i < size; i++) {
 		memset(request + i, *(c + i), 1);
