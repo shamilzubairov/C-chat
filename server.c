@@ -39,11 +39,11 @@ struct ServerBuffer {
 	char zero[30]; // для конвертации строки к struct ServerBuffer
 } server_buffer;
 
-void Connect(struct Connection *);
+void open_connection(struct Connection *);
 
-void Close_connection();
+void close_connection();
 
-void save_messages(const char *, const char *);
+void save_message(const char *, const char *);
 
 void load_messages(const char *, char *);
 
@@ -61,7 +61,7 @@ void memdump(const char [], const int);
 
 int main() {
 	sigaction_init(SIGALRM, handler.sig_alarm);
-	sigaction_init(SIGINT, Close_connection);
+	sigaction_init(SIGINT, close_connection);
 	
 	int current_clients_size = 0;
 	char incoming[BUFSIZE];
@@ -77,7 +77,7 @@ int main() {
 
 	memset(server_buffer.zero, '\0', 30);
 
-	Connect(&udp);
+	open_connection(&udp);
 
 	// ...
 	printf("Server is working by PORT - %d\n\n", udp.port);
@@ -107,7 +107,7 @@ int main() {
 			multistrcat(server_buffer.message, client_buffer.login, ": ", client_buffer.message, "\0");
 			convert_to_string(&server_buffer, outgoing, BUFSIZE);
 			send_to_clients(udp.socket, clients, outgoing);
-			save_messages(FILEMESSAGES, server_buffer.message);
+			save_message(FILEMESSAGES, server_buffer.message);
 		} else if(!strcmp(client_buffer.type, "register")) {
 			printf("\n===REGISTRATION OF NEW CLIENT===\n\n");
 			// Создаем параллельный дочерний процесс для нового участника
@@ -162,7 +162,7 @@ int main() {
     return 0;
 }
 
-void Connect(struct Connection *conn) {
+void open_connection(struct Connection *conn) {
 	struct sockaddr_in host_address;
 	conn->socket = socket(FAM, SOCK, 0);
 	int opt = 1;
@@ -183,7 +183,7 @@ void Connect(struct Connection *conn) {
 	}
 }
 
-void Close_connection() {
+void close_connection() {
 	// Если сервер отключился, отправить сообщение всем клиентам
 	// и инициировать у них отключение и повторное подключение
 	char notify[BUFSIZE];
@@ -194,9 +194,9 @@ void Close_connection() {
 	handler.sig_int(SIGINT);
 }
 
-void save_messages(const char *filename, const char *messages) {
+void save_message(const char *filename, const char *messages) {
 	// Сохранять только последние 10 сообщений
-	FILE *fm = fopen(filename, "ab");
+	FILE *fm = fopen(filename, "a");
 	if(fm == NULL) {
 		handler.sys_error("File");
 	}
@@ -205,10 +205,12 @@ void save_messages(const char *filename, const char *messages) {
 }
 
 void load_messages(const char *filename, char *outgoing) {
-	FILE *fm = fopen(filename, "rb");
+	FILE *fm = fopen(filename, "r");
+	if(fm == NULL) {
+		handler.sys_error("File");
+	}
 	char message[MSGSIZE];
-	while(!feof(fm)) {
-		fgets(message, MSGSIZE, fm);
+	while(!feof(fm) && fgets(message, MSGSIZE, fm)) {
 		strcat(outgoing, message);
 	}
 }

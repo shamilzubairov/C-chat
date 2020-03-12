@@ -41,14 +41,14 @@ struct ServerBuffer {
 	char zero[30]; // для конвертации строки к struct ServerBuffer
 } server_buffer;
 
-void Connect(struct Connection *);
+void open_connection(struct Connection *);
 
-void Close_connection();
+void close_connection();
 
 void convert_to_string(void *, char [], int);
 
 int main() {
-	sigaction_init(SIGINT, Close_connection);
+	sigaction_init(SIGINT, close_connection);
 
 	char reading[BUFSIZE];
 	char incoming[BUFSIZE];
@@ -67,7 +67,7 @@ int main() {
 	printf("-\n");
 
 	
-	Connect(&udp);
+	open_connection(&udp);
 
 	printf("To start chatting you must input your login so that your friends could write you\n");
 	printf("-\n");
@@ -126,7 +126,7 @@ int main() {
     return 0;
 }
 
-void Connect(struct Connection *conn) {
+void open_connection(struct Connection *conn) {
 	struct sockaddr_in host_address;
 	conn->socket = socket(FAM, SOCK, 0);
 	int opt = 1;
@@ -141,7 +141,7 @@ void Connect(struct Connection *conn) {
 	connect(conn->socket, (struct sockaddr*)&host_address, sizeof(host_address));
 }
 
-void Close_connection() {
+void close_connection() {
 	// Если сервер отключился, отправить сообщение всем клиентам
 	// и инициировать у них отключение и повторное подключение
 	char notify[BUFSIZE];

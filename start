@@ -1,7 +1,5 @@
 #!/bin/bash
 
-make clean
-
 if ! [ -d db/ ]; then
 mkdir db
 fi
