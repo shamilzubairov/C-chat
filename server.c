@@ -2,12 +2,7 @@
 #include "mods/base.h"
 #include "mods/handlers.h"
 
-struct SystemHandlers {
-	void (*sig_alarm) ();
-	void (*sig_int) ();
-	void (*sig_stub) ();
-	int (*sys_error) (char *);
-} handler = {
+struct SystemHandlers handler = {
 	&sig_alarm,
 	&sig_int,
 	&sig_stub,
@@ -16,28 +11,13 @@ struct SystemHandlers {
 
 enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
 
-struct Connection {
-	short socket;
-	int port;
-} udp = {
-	-1,
-	7654
-};
+struct Connection udp = { -1, 7654 };
 
 struct sockaddr_in clients[MAXCLIENTSSIZE];
 
-struct ClientBuffer {
-	char type[20]; // message, registration, command, leave ...
-	char login[LOGSIZE];
-	char message[MSGSIZE];
-	char command[10]; // name, group, exit ...
-} client_buffer;
+struct ClientBuffer client_buffer;
 
-struct ServerBuffer {
-	char type[20]; // open, close
-	char message[MSGSIZE];
-	char zero[30]; // для конвертации строки к struct ServerBuffer
-} server_buffer;
+struct ServerBuffer server_buffer;
 
 void open_connection(struct Connection *);
 
@@ -47,13 +27,9 @@ void save_message(const char *, const char *);
 
 void load_messages(const char *, char *);
 
-void add_new_client(const char *, struct sockaddr_in *, int);
-
-void save_clients(const char *, struct sockaddr_in []);
+void add_new_client(const char *, struct sockaddr_in *);
 
 void load_clients(const char *, struct sockaddr_in []);
-
-int send_string();
 
 void send_to_clients(int, struct sockaddr_in [], const char []);
 
@@ -75,6 +51,8 @@ int main() {
 
 	open_connection(&udp);
 
+	strcpy(server_buffer.type, "open");
+
 	// ...
 	printf("Server is working by PORT - %d\n\n", udp.port);
 	
@@ -83,7 +61,6 @@ int main() {
 			// Достигнуто макс. кол-во клиентов
 			// Отослать уведомление
 		}
-		load_clients(FILECLIENTS, clients);
 
 		bzero(incoming, BUFSIZE);
 		bzero(outgoing, BUFSIZE);
@@ -96,11 +73,9 @@ int main() {
 		strcpy(client_buffer.command, ((struct ClientBuffer *)incoming)->command);
 
 		memdump(client_buffer.message, getsize(client_buffer.message));
-		
-		strcpy(server_buffer.type, "open");
 
 		if(!strcmp(client_buffer.type, "message")) {
-			multistrcat(server_buffer.message, client_buffer.login, ": ", client_buffer.message, "\0");
+			sprintf(server_buffer.message, "%s: %s", client_buffer.login, client_buffer.message);
 			convert_to_string(&server_buffer, outgoing);
 			send_to_clients(udp.socket, clients, outgoing);
 			save_message(FILEMESSAGES, server_buffer.message);
@@ -108,45 +83,47 @@ int main() {
 			printf("\n===REGISTRATION OF NEW CLIENT===\n\n");
 			// Создаем параллельный дочерний процесс для нового участника
 			if(fork() == 0) {
-				// Регистрируем участника
 				sigaction_init(SIGINT, handler.sig_stub);
+				// Регистрируем участника
 				printf("Connection with %s (by port - %d)\n\n", client_buffer.login, htons(from_address.sin_port));
-				sprintf(
-					server_buffer.message, 
-					"\nConnection established with port %d\n",
-					htons(from_address.sin_port)
-				);
+				
+				sprintf(server_buffer.message, "\nConnection established with port %d\n", htons(from_address.sin_port));
 				convert_to_string(&server_buffer, outgoing);
 				sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
 				
 				// Отправляем файл с предыдущими сообщениями
 				bzero(server_buffer.message, MSGSIZE);
+
 				load_messages(FILEMESSAGES, server_buffer.message);
 				convert_to_string(&server_buffer, outgoing);
 				sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
 
 				exit(0);
 			} // ------ fork end ------ //
-			multistrcat(server_buffer.message, "\t\t", client_buffer.login, " join this chat\n", "\0");
+			sprintf(server_buffer.message, "\t\t%s join this chat\n", client_buffer.login);
 			convert_to_string(&server_buffer, outgoing);
 			send_to_clients(udp.socket, clients, outgoing);
-			add_new_client(FILECLIENTS, &from_address, from_addrlen);
+
+			add_new_client(FILECLIENTS, &from_address);
+			load_clients(FILECLIENTS, clients);
 			current_clients_size++;
 		} else if(!strcmp(client_buffer.type, "close")) {
-			int i = 0, j = 0;
+			bzero(server_buffer.message, MSGSIZE);
+			sprintf(server_buffer.message, "\t\t%s leave this chat\n", client_buffer.login);
+			convert_to_string(&server_buffer, outgoing);
+			send_to_clients(udp.socket, clients, outgoing);
+			
+			int i = 0;
+			int desc = open(FILECLIENTS, O_TRUNC | O_RDONLY);
+			close(desc);
 			while(clients[i].sin_port) {
 				if(clients[i].sin_port == from_address.sin_port) {
-					j = i;
-					while(clients[j + 1].sin_port) {
-						memcpy(&clients[j], &(clients[j + 1]), sizeof(struct sockaddr));
-						j++;
-					}
-					memset(&clients[j], '\0', sizeof(struct sockaddr));
-					break;
+					printf("Removing port %d\n", htons(from_address.sin_port));
+				} else {
+					add_new_client(FILECLIENTS, &(clients[i]));
 				}
 				i++;
 			}
-			save_clients(FILECLIENTS, clients);
 		} else {
 			printf("NO MATCH TYPE IN BUFFER\n");
 		}
@@ -187,16 +164,30 @@ void close_connection() {
 	strcpy(server_buffer.message, "\t\tConnection closed\n");
 	convert_to_string(&server_buffer, notify);
 	send_to_clients(udp.socket, clients, notify);
+
+	int desc;
+  	desc = open(FILECLIENTS, O_TRUNC | O_RDONLY);
+	close(desc);
+  	desc = open(FILEMESSAGES, O_TRUNC | O_RDONLY);
+	close(desc);
+
+	shutdown(udp.socket, SHUT_RDWR);
+
 	handler.sig_int(SIGINT);
 }
 
 void save_message(const char *filename, const char *messages) {
+	static int lines = 1;
 	// Сохранять только последние 10 сообщений
 	FILE *fm = fopen(filename, "a");
 	if(fm == NULL) {
 		handler.sys_error("File");
 	}
+	if(lines > 5) {
+		// Удалять первое сообщение
+	}
 	fputs(messages, fm);
+	lines++;
     fclose(fm);
 }
 
@@ -211,7 +202,7 @@ void load_messages(const char *filename, char *outgoing) {
 	}
 }
 
-void add_new_client(const char *filename, struct sockaddr_in *client, int clientsize) {
+void add_new_client(const char *filename, struct sockaddr_in *client) {
 	char *c;
 	FILE *fc = fopen(filename, "ab");
 	if(fc == NULL) {
@@ -219,21 +210,7 @@ void add_new_client(const char *filename, struct sockaddr_in *client, int client
 	}
 	c = (char *)client;
     // посимвольно записываем в файл структуру
-    for (int i = 0; i < clientsize; i++) {
-        putc(*c++, fc);
-    }
-    fclose(fc);
-}
-
-void save_clients(const char *filename, struct sockaddr_in clients[]) {
-	char *c;
-	FILE *fc = fopen(filename, "wb");
-	if(fc == NULL) {
-		handler.sys_error("File");
-	}
-	c = (char *)clients;
-    // посимвольно записываем в файл структуру
-	while (*c) {
+    for (int i = 0; i < sizeof(struct sockaddr_in); i++) {
         putc(*c++, fc);
     }
     fclose(fc);

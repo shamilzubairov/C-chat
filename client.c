@@ -2,12 +2,7 @@
 #include "mods/base.h"
 #include "mods/handlers.h"
 
-struct SystemHandlers {
-	void (*sig_alarm) ();
-	void (*sig_int) ();
-	void (*sig_stub) ();
-	int (*sys_error) (char *);
-} handler = {
+struct SystemHandlers handler = {
 	&sig_alarm,
 	&sig_int,
 	&sig_stub,
@@ -16,30 +11,15 @@ struct SystemHandlers {
 
 enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
 
-struct Connection {
-	short socket;
-	int port;
-} udp = {
-	-1,
-	7654
-};
+struct Connection udp = { -1, 7654 };
 
 struct UserData {
 	char login[LOGSIZE];
 } user;
 
-struct ClientBuffer {
-	char type[20];
-	char login[LOGSIZE];
-	char message[MSGSIZE];
-	char command[10];
-} client_buffer;
+struct ClientBuffer client_buffer;
 
-struct ServerBuffer {
-	char type[20]; // open, close
-	char message[MSGSIZE];
-	char zero[30]; // для конвертации строки к struct ServerBuffer
-} server_buffer;
+struct ServerBuffer server_buffer;
 
 void open_connection(struct Connection *);
 
@@ -95,7 +75,6 @@ int main() {
 
 	if(fork() == 0) {
 		sigaction_init(SIGINT, handler.sig_stub);
-		sigaction_init(SIGALRM, handler.sig_alarm);
 		do {
 			bzero(incoming, BUFSIZE);
 			read(udp.socket, incoming, BUFSIZE);
@@ -105,7 +84,8 @@ int main() {
 				printub(server_buffer.message);
 			} else if(!strcmp(server_buffer.type, "close")) {
 				printub(server_buffer.message);
-				alarm(1);
+				kill(getppid(), SIGINT);
+				kill(getpid(), SIGINT);
 			}
 		} while(1);
 		exit(0);
@@ -148,6 +128,7 @@ void close_connection() {
 	strcpy(client_buffer.type, "close");
 	convert_to_string(&client_buffer, notify, BUFSIZE);
 	write(udp.socket, notify, BUFSIZE);
+	shutdown(udp.socket, SHUT_RDWR);
 	handler.sig_int(SIGINT);
 }
 

@@ -11,4 +11,5 @@ touch db/participants
 fi
 
 make compile
+
 ./server
