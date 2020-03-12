@@ -53,9 +53,11 @@ void save_clients(const char *, struct sockaddr_in []);
 
 void load_clients(const char *, struct sockaddr_in []);
 
+int send_string();
+
 void send_to_clients(int, struct sockaddr_in [], const char []);
 
-void convert_to_string(void *, char [], int);
+void convert_to_string(void *, char []);
 
 void memdump(const char [], const int);
 
@@ -68,12 +70,6 @@ int main() {
 	char outgoing[BUFSIZE];
 	struct sockaddr_in from_address;
 	socklen_t from_addrlen = sizeof(struct sockaddr_in);
-	
-	// Очищаем файлы
-	FILE *fc = fopen(FILECLIENTS, "w");
-	FILE *fm = fopen(FILEMESSAGES, "w");
-	fclose(fc);
-	fclose(fm);
 
 	memset(server_buffer.zero, '\0', 30);
 
@@ -105,7 +101,7 @@ int main() {
 
 		if(!strcmp(client_buffer.type, "message")) {
 			multistrcat(server_buffer.message, client_buffer.login, ": ", client_buffer.message, "\0");
-			convert_to_string(&server_buffer, outgoing, BUFSIZE);
+			convert_to_string(&server_buffer, outgoing);
 			send_to_clients(udp.socket, clients, outgoing);
 			save_message(FILEMESSAGES, server_buffer.message);
 		} else if(!strcmp(client_buffer.type, "register")) {
@@ -120,19 +116,19 @@ int main() {
 					"\nConnection established with port %d\n",
 					htons(from_address.sin_port)
 				);
-				convert_to_string(&server_buffer, outgoing, BUFSIZE);
+				convert_to_string(&server_buffer, outgoing);
 				sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
 				
 				// Отправляем файл с предыдущими сообщениями
 				bzero(server_buffer.message, MSGSIZE);
 				load_messages(FILEMESSAGES, server_buffer.message);
-				convert_to_string(&server_buffer, outgoing, BUFSIZE);
+				convert_to_string(&server_buffer, outgoing);
 				sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
 
 				exit(0);
 			} // ------ fork end ------ //
 			multistrcat(server_buffer.message, "\t\t", client_buffer.login, " join this chat\n", "\0");
-			convert_to_string(&server_buffer, outgoing, BUFSIZE);
+			convert_to_string(&server_buffer, outgoing);
 			send_to_clients(udp.socket, clients, outgoing);
 			add_new_client(FILECLIENTS, &from_address, from_addrlen);
 			current_clients_size++;
@@ -189,7 +185,7 @@ void close_connection() {
 	char notify[BUFSIZE];
 	strcpy(server_buffer.type, "close");
 	strcpy(server_buffer.message, "\t\tConnection closed\n");
-	convert_to_string(&server_buffer, notify, BUFSIZE);
+	convert_to_string(&server_buffer, notify);
 	send_to_clients(udp.socket, clients, notify);
 	handler.sig_int(SIGINT);
 }
@@ -246,7 +242,6 @@ void save_clients(const char *filename, struct sockaddr_in clients[]) {
 void load_clients(const char *filename, struct sockaddr_in clients[]) {
     char *c;
     int sym;
- 
     FILE *fc = fopen(filename, "rb");
 	if(fc == NULL) {
 		handler.sys_error("File");
@@ -270,12 +265,12 @@ void send_to_clients(int socket, struct sockaddr_in clients[], const char messag
 	printf("\n");
 }
 
-void convert_to_string(void *buffer, char request[], int size) {
+void convert_to_string(void *struct_buffer, char string[]) {
 	char *c;
-	c = (char *)buffer;
+	c = (char *)struct_buffer;
 	// посимвольно записываем структуру в сообщение
-	for (int i = 0; i < size; i++) {
-		memset(request + i, *(c + i), 1);
+	for (int i = 0; i < BUFSIZE; i++) {
+		memset(string++, *(c++), 1);
 	}
 }
 
