@@ -120,6 +120,8 @@ int main() {
 			strcpy(client_buffer.message, reading);
 			convert_to_string(&client_buffer, outgoing, BUFSIZE);
 			write(udp.socket, outgoing, BUFSIZE);
+		} else if(!strncmp(reading, "all:", 4)) {
+			strcpy(client_buffer.type, "message");
 		} else {
 			strcpy(client_buffer.message, reading);
 			convert_to_string(&client_buffer, outgoing, BUFSIZE);

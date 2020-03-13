@@ -13,14 +13,12 @@ enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
 
 struct Connection udp = { -1, 7654 };
 
-struct sockaddr_in clients[MAXCLIENTSSIZE];
-
 struct Clients {
 	struct sockaddr_in addr;
 	char login[LOGSIZE];
-} clnt;
+};
 
-struct Clients all_clients[MAXCLIENTSSIZE];
+struct Clients clients[MAXCLIENTSSIZE];
 
 struct ClientBuffer client_buffer;
 
@@ -34,11 +32,11 @@ void save_message(const char *, const char *);
 
 void load_messages(const char *, char *);
 
-void add_client(const char *, struct sockaddr_in *);
+void add_client(const char *, struct Clients *);
 
-void load_clients(const char *, struct sockaddr_in []);
+void load_clients(const char *, struct Clients []);
 
-void send_to_clients(int, struct sockaddr_in [], const char []);
+void send_to_clients(int, struct Clients [], const char []);
 
 void convert_to_string(void *, char []);
 
@@ -110,7 +108,10 @@ int main() {
 			convert_to_string(&server_buffer, outgoing);
 			send_to_clients(udp.socket, clients, outgoing);
 
-			add_client(FILECLIENTS, &from_address);
+			clients[current_clients_size].addr = from_address;
+			strcpy(clients[current_clients_size].login, client_buffer.login);
+
+			add_client(FILECLIENTS, &(clients[current_clients_size]));
 			load_clients(FILECLIENTS, clients);
 			current_clients_size++;
 		} else if(!strcmp(client_buffer.type, "close")) {
@@ -122,8 +123,8 @@ int main() {
 			int i = 0;
 			int desc = open(FILECLIENTS, O_TRUNC | O_RDONLY);
 			close(desc);
-			while(clients[i].sin_port) {
-				if(clients[i].sin_port == from_address.sin_port) {
+			while(clients[i].addr.sin_port) {
+				if(clients[i].addr.sin_port == from_address.sin_port) {
 					printf("Removing port %d\n", htons(from_address.sin_port));
 				} else {
 					add_client(FILECLIENTS, &(clients[i]));
@@ -131,13 +132,21 @@ int main() {
 				i++;
 			}
 			load_clients(FILECLIENTS, clients);
+			current_clients_size--;
 		} else if(!strcmp(client_buffer.type, "command")) {
 			strcpy(client_buffer.command, ((struct ClientBuffer *)incoming)->command);
 			strcpy(client_buffer.to_login, ((struct ClientBuffer *)incoming)->to_login);
 			remove_nl(client_buffer.to_login);
-			sprintf(server_buffer.message, "%s (ONLY FOR %s): %s", client_buffer.login, client_buffer.to_login, client_buffer.message);
-			convert_to_string(&server_buffer, outgoing);
-			sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
+			int p = 0;
+			while(clients[p].addr.sin_port) {
+				if(!strcmp(clients[p].login, client_buffer.to_login)) {
+					sprintf(server_buffer.message, "%s (ONLY FOR YOU): %s", client_buffer.login, client_buffer.message);
+					convert_to_string(&server_buffer, outgoing);
+					sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&clients[p].addr, sizeof(struct sockaddr));
+					break;
+				}
+				p++;
+			}
 		} else {
 			printf("NO MATCH TYPE IN BUFFER\n");
 		}
@@ -220,7 +229,7 @@ void load_messages(const char *filename, char *outgoing) {
 	}
 }
 
-void add_client(const char *filename, struct sockaddr_in *client) {
+void add_client(const char *filename, struct Clients *client) {
 	char *c;
 	FILE *fc = fopen(filename, "ab");
 	flock(fileno(fc), LOCK_SH);
@@ -229,14 +238,14 @@ void add_client(const char *filename, struct sockaddr_in *client) {
 	}
 	c = (char *)client;
     // посимвольно записываем в файл структуру
-    for (int i = 0; i < sizeof(struct sockaddr_in); i++) {
+    for (int i = 0; i < sizeof(struct Clients); i++) {
         putc(*c++, fc);
     }
 	flock(fileno(fc), LOCK_UN);
     fclose(fc);
 }
 
-void load_clients(const char *filename, struct sockaddr_in clients[]) {
+void load_clients(const char *filename, struct Clients clients[]) {
     char *c;
     int sym;
     FILE *fc = fopen(filename, "rb");
@@ -251,12 +260,12 @@ void load_clients(const char *filename, struct sockaddr_in clients[]) {
     fclose(fc);
 }
 
-void send_to_clients(int socket, struct sockaddr_in clients[], const char message[]) {
+void send_to_clients(int socket, struct Clients clients[], const char message[]) {
 	int p = 0;
 	printf("SEND MESSAGE TO:\n");
-	while(clients[p].sin_port) {
-		printf("%d) %d\n", p, htons(clients[p].sin_port));
-		sendto(socket, message, BUFSIZE, 0, (struct sockaddr *)&clients[p], sizeof(struct sockaddr));
+	while(clients[p].addr.sin_port) {
+		printf("%d) %d\n", p, htons(clients[p].addr.sin_port));
+		sendto(socket, message, BUFSIZE, 0, (struct sockaddr *)&clients[p].addr, sizeof(struct sockaddr));
 		p++;
 	}
 	printf("\n");
