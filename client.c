@@ -63,9 +63,21 @@ int main() {
 
 	printf("Wait for connection...\n");
 
-	if(read(udp.socket, incoming, BUFSIZE) == -1) {
+	int try_to = 0, r_byte;
+	while(try_to < 10) {
+		r_byte = read(udp.socket, incoming, BUFSIZE);
+		if(r_byte == -1) {
+			write(udp.socket, outgoing, BUFSIZE);
+			sleep(1);
+		} else {
+			break;
+		}
+		try_to++;
+	}
+	if(try_to == 10 && r_byte == -1) {
 		handler.sys_error("Server connection");
 	}
+	
 	strcpy(server_buffer.type, ((struct ServerBuffer *)incoming)->type);
 	strcpy(server_buffer.message, ((struct ServerBuffer *)incoming)->message);
 
@@ -80,6 +92,7 @@ int main() {
 			read(udp.socket, incoming, BUFSIZE);
 			strcpy(server_buffer.type, ((struct ServerBuffer *)incoming)->type);
 			strcpy(server_buffer.message, ((struct ServerBuffer *)incoming)->message);
+			
 			if(!strcmp(server_buffer.type, "open")) {
 				printub(server_buffer.message);
 			} else if(!strcmp(server_buffer.type, "close")) {

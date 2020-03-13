@@ -27,7 +27,7 @@ void save_message(const char *, const char *);
 
 void load_messages(const char *, char *);
 
-void add_new_client(const char *, struct sockaddr_in *);
+void add_client(const char *, struct sockaddr_in *);
 
 void load_clients(const char *, struct sockaddr_in []);
 
@@ -104,7 +104,7 @@ int main() {
 			convert_to_string(&server_buffer, outgoing);
 			send_to_clients(udp.socket, clients, outgoing);
 
-			add_new_client(FILECLIENTS, &from_address);
+			add_client(FILECLIENTS, &from_address);
 			load_clients(FILECLIENTS, clients);
 			current_clients_size++;
 		} else if(!strcmp(client_buffer.type, "close")) {
@@ -120,10 +120,11 @@ int main() {
 				if(clients[i].sin_port == from_address.sin_port) {
 					printf("Removing port %d\n", htons(from_address.sin_port));
 				} else {
-					add_new_client(FILECLIENTS, &(clients[i]));
+					add_client(FILECLIENTS, &(clients[i]));
 				}
 				i++;
 			}
+			load_clients(FILECLIENTS, clients);
 		} else {
 			printf("NO MATCH TYPE IN BUFFER\n");
 		}
@@ -180,14 +181,18 @@ void save_message(const char *filename, const char *messages) {
 	static int lines = 1;
 	// Сохранять только последние 10 сообщений
 	FILE *fm = fopen(filename, "a");
+	flock(fileno(fm), LOCK_SH);
 	if(fm == NULL) {
 		handler.sys_error("File");
 	}
-	if(lines > 5) {
+	if(lines > 10) {
 		// Удалять первое сообщение
+		fseek(fm, 0, SEEK_SET);
+		fseek(fm, 0, SEEK_END);
 	}
 	fputs(messages, fm);
 	lines++;
+	flock(fileno(fm), LOCK_UN);
     fclose(fm);
 }
 
@@ -202,9 +207,10 @@ void load_messages(const char *filename, char *outgoing) {
 	}
 }
 
-void add_new_client(const char *filename, struct sockaddr_in *client) {
+void add_client(const char *filename, struct sockaddr_in *client) {
 	char *c;
 	FILE *fc = fopen(filename, "ab");
+	flock(fileno(fc), LOCK_SH);
 	if(fc == NULL) {
 		handler.sys_error("File");
 	}
@@ -213,6 +219,7 @@ void add_new_client(const char *filename, struct sockaddr_in *client) {
     for (int i = 0; i < sizeof(struct sockaddr_in); i++) {
         putc(*c++, fc);
     }
+	flock(fileno(fc), LOCK_UN);
     fclose(fc);
 }
 
