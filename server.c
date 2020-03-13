@@ -15,6 +15,13 @@ struct Connection udp = { -1, 7654 };
 
 struct sockaddr_in clients[MAXCLIENTSSIZE];
 
+struct Clients {
+	struct sockaddr_in addr;
+	char login[LOGSIZE];
+} clnt;
+
+struct Clients all_clients[MAXCLIENTSSIZE];
+
 struct ClientBuffer client_buffer;
 
 struct ServerBuffer server_buffer;
@@ -70,7 +77,6 @@ int main() {
 		strcpy(client_buffer.type, ((struct ClientBuffer *)incoming)->type);
 		strcpy(client_buffer.login, ((struct ClientBuffer *)incoming)->login);
 		strcpy(client_buffer.message, ((struct ClientBuffer *)incoming)->message);
-		strcpy(client_buffer.command, ((struct ClientBuffer *)incoming)->command);
 
 		memdump(client_buffer.message, getsize(client_buffer.message));
 
@@ -125,6 +131,13 @@ int main() {
 				i++;
 			}
 			load_clients(FILECLIENTS, clients);
+		} else if(!strcmp(client_buffer.type, "command")) {
+			strcpy(client_buffer.command, ((struct ClientBuffer *)incoming)->command);
+			strcpy(client_buffer.to_login, ((struct ClientBuffer *)incoming)->to_login);
+			remove_nl(client_buffer.to_login);
+			sprintf(server_buffer.message, "%s (ONLY FOR %s): %s", client_buffer.login, client_buffer.to_login, client_buffer.message);
+			convert_to_string(&server_buffer, outgoing);
+			sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
 		} else {
 			printf("NO MATCH TYPE IN BUFFER\n");
 		}

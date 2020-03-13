@@ -108,10 +108,23 @@ int main() {
 	do {
 		bzero(reading, BUFSIZE);
 		bzero(outgoing, BUFSIZE);
-		read(0, reading, sizeof(reading));
-		strcpy(client_buffer.message, reading);
-		convert_to_string(&client_buffer, outgoing, BUFSIZE);
-		write(udp.socket, outgoing, BUFSIZE);
+		read(0, reading, MSGSIZE);
+		if(!strncmp(reading, "name:", 5)) {
+			bzero(client_buffer.type, 20);
+			strcpy(client_buffer.type, "command");
+			strcpy(client_buffer.command, "name");
+			strncpy(client_buffer.to_login, (reading + 5), LOGSIZE);
+			printf("Enter a message:\n");
+			bzero(reading, MSGSIZE);
+			read(0, reading, MSGSIZE);
+			strcpy(client_buffer.message, reading);
+			convert_to_string(&client_buffer, outgoing, BUFSIZE);
+			write(udp.socket, outgoing, BUFSIZE);
+		} else {
+			strcpy(client_buffer.message, reading);
+			convert_to_string(&client_buffer, outgoing, BUFSIZE);
+			write(udp.socket, outgoing, BUFSIZE);
+		}
 	} while(1);
 
 	shutdown(udp.socket, SHUT_RDWR);

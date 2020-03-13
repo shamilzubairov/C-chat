@@ -23,6 +23,7 @@ struct ServerBuffer {
 struct ClientBuffer {
 	char type[20]; // message, registration, command, leave ...
 	char login[LOGSIZE];
+	char to_login[LOGSIZE];
 	char message[MSGSIZE];
 	char command[10]; // name, group, exit ...
 };
