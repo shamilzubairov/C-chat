@@ -108,7 +108,7 @@ int main() {
 			convert_to_string(&server_buffer, outgoing);
 			send_to_clients(udp.socket, clients, outgoing);
 
-			clients[current_clients_size].addr = from_address;
+			memcpy((void *)&(clients[current_clients_size].addr), (void *)&from_address, from_addrlen);
 			strcpy(clients[current_clients_size].login, client_buffer.login);
 
 			add_client(FILECLIENTS, &(clients[current_clients_size]));
@@ -120,9 +120,10 @@ int main() {
 			convert_to_string(&server_buffer, outgoing);
 			send_to_clients(udp.socket, clients, outgoing);
 			
-			int i = 0;
 			int desc = open(FILECLIENTS, O_TRUNC | O_RDONLY);
 			close(desc);
+
+			int i = 0;
 			while(clients[i].addr.sin_port) {
 				if(clients[i].addr.sin_port == from_address.sin_port) {
 					printf("Removing port %d\n", htons(from_address.sin_port));
