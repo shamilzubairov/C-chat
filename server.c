@@ -89,9 +89,9 @@ int main() {
 			if(fork() == 0) {
 				sigaction_init(SIGINT, handler.sig_stub);
 				// Регистрируем участника
-				printf("Connection with %s (by port - %d)\n\n", client_buffer.login, htons(from_address.sin_port));
+				printf("CONNECTION WITH %s (BY PORT - %d)\n\n", client_buffer.login, htons(from_address.sin_port));
 				
-				sprintf(server_buffer.message, "\nConnection established with port %d\n", htons(from_address.sin_port));
+				sprintf(server_buffer.message, "\nCONNECTION ESTABLISHED WITH PORT %d\n", htons(from_address.sin_port));
 				convert_to_string(&server_buffer, outgoing);
 				sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
 				
@@ -104,7 +104,7 @@ int main() {
 
 				exit(0);
 			} // ------ fork end ------ //
-			sprintf(server_buffer.message, "\t\t%s join this chat\n", client_buffer.login);
+			sprintf(server_buffer.message, "\t\t%s JOIN THIS CHAT\n", client_buffer.login);
 			convert_to_string(&server_buffer, outgoing);
 			send_to_clients(udp.socket, clients, outgoing);
 
@@ -184,7 +184,7 @@ void close_connection() {
 	// и инициировать у них отключение и повторное подключение
 	char notify[BUFSIZE];
 	strcpy(server_buffer.type, "close");
-	strcpy(server_buffer.message, "\t\tConnection closed\n");
+	strcpy(server_buffer.message, "\t\tCONNECTION CLOSED\n");
 	convert_to_string(&server_buffer, notify);
 	send_to_clients(udp.socket, clients, notify);
 
