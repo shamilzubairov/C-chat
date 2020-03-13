@@ -116,7 +116,7 @@ int main() {
 			current_clients_size++;
 		} else if(!strcmp(client_buffer.type, "close")) {
 			bzero(server_buffer.message, MSGSIZE);
-			sprintf(server_buffer.message, "\t\t%s leave this chat\n", client_buffer.login);
+			sprintf(server_buffer.message, "\t\t%s LEAVE THIS CHAT\n", client_buffer.login);
 			convert_to_string(&server_buffer, outgoing);
 			send_to_clients(udp.socket, clients, outgoing);
 			
@@ -132,6 +132,7 @@ int main() {
 				}
 				i++;
 			}
+			memset(clients, '\0', sizeof(struct Clients) * MAXCLIENTSSIZE);
 			load_clients(FILECLIENTS, clients);
 			current_clients_size--;
 		} else if(!strcmp(client_buffer.type, "command")) {
@@ -148,6 +149,10 @@ int main() {
 				}
 				p++;
 			}
+			bzero(server_buffer.message, MSGSIZE);
+			sprintf(server_buffer.message, "%s (ONLY FOR %s): %s", client_buffer.login, client_buffer.to_login, client_buffer.message);
+			convert_to_string(&server_buffer, outgoing);
+			sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
 		} else {
 			printf("NO MATCH TYPE IN BUFFER\n");
 		}
