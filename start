@@ -1,0 +1,15 @@
+#!/bin/bash
+
+if ! [ -d db/ ]; then
+mkdir db
+fi
+if ! [ -f db/messages ]; then
+touch db/messages
+fi
+if ! [ -f db/participants ]; then
+touch db/participants
+fi
+
+make compile
+
+./server

@@ -1,0 +1,6 @@
+client.dSYM/
+server.dSYM/
+db/
+*.o
+server
+client

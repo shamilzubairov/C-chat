@@ -1,225 +1,313 @@
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <errno.h>
-#include <signal.h>
-#include <stdarg.h>
-#include <sys/socket.h>
-#include <netinet/in.h> // sockaddr_in
-#include <arpa/inet.h> // htons
+#include "mods/inc.h"
+#include "mods/base.h"
+#include "mods/handlers.h"
 
-#define TOTALCLIENTS 10
-#define MESSAGESSIZE 100
-#define SMALLMESSAGESSIZE 50
-#define LOGINSIZE 20
-#define TOKENSIZE 32
-#define CMDSIZE 6
-
-char TOKEN[TOKENSIZE] = "LOGIN::";
-
-void printub(const char *);
-int getsize(const char *);
-void remove_nl(char *);
-void multistrcat(char *, ...);
-
-void sig_alarm(int);
-void sig_int(int);
-void sig_stub(int);
-
-int sys_error(char *);
-
-enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
-
-struct Connection {
-	char *host;
-	int port;
-	int socket; // сокет
-	struct sockaddr_in addr;
-} conn = {
-	"127.0.0.1",
-	7654
-};
-
-struct Clients {
-	struct sockaddr_in addr[TOTALCLIENTS];
-	char login[TOTALCLIENTS];
-} clnt;
-
-struct SystemHandlers {
-	void (*sig_alarm) ();
-	void (*sig_int) ();
-	void (*sig_stub) ();
-	int (*sys_error) (char *);
-} hdl = {
+struct SystemHandlers handler = {
 	&sig_alarm,
 	&sig_int,
 	&sig_stub,
 	&sys_error,
 };
 
-void sigaction_init(int sig, void handler());
+enum Family { FAM = AF_INET, SOCK = SOCK_DGRAM };
 
-// -------------------------
-// -------------------------
-// -------------------------
-// -------------------------
-// -------------------------
-// -------------------------
+struct Connection udp = { -1, 7654 };
 
-int add_client(struct Clients, struct sockaddr_in);
+struct Clients {
+	struct sockaddr_in addr;
+	char login[LOGSIZE];
+};
 
-void send_to_clients(struct Connection, struct Clients, struct sockaddr_in, socklen_t);
+struct Clients clients[MAXCLIENTSSIZE];
+
+struct ClientBuffer client_buffer;
+
+struct ServerBuffer server_buffer;
+
+void open_connection(struct Connection *);
+
+void close_connection();
+
+void save_message(const char *, const char *);
+
+void load_messages(const char *, char *);
+
+void add_client(const char *, struct Clients *);
+
+void load_clients(const char *, struct Clients []);
+
+void send_to_clients(int, struct Clients [], const char []);
+
+void convert_to_string(void *, char []);
+
+void memdump(const char [], const int);
 
 int main() {
-	sigaction_init(SIGALRM, hdl.sig_alarm);
-
-	conn.addr.sin_family = FAM;
-	conn.addr.sin_port = htons(conn.port);
-	if(!inet_aton(conn.host, &conn.addr.sin_addr)) {
-		hdl.sys_error("Invalid address");
-	}
-	conn.socket = socket(FAM, SOCK, 0);
-	if(conn.socket == -1) {
-		hdl.sys_error("Socket connection");
-	}
-	int bnd = bind(conn.socket, (struct sockaddr*)&conn.addr, sizeof(conn.addr));
-	if(bnd == -1) {
-		hdl.sys_error("Bind connection");
-	} else {
-		printub("Server is working...\n----------------------\n\n");
-	}
-
-	char incoming[MESSAGESSIZE];
-	do {
-		bzero(incoming, MESSAGESSIZE);
-		struct sockaddr_in from_addr;
-		socklen_t addrlen = sizeof(from_addr);
-		alarm(120);
-		recvfrom(conn.socket, incoming, sizeof(incoming), 0, (struct sockaddr*)&from_addr, &addrlen);
-#ifdef DEBUG 
-	// [-DDEBUG=1 cmd]
-	printf("%s\n", incoming);
-#endif
-		if(!strncmp(incoming, TOKEN, 7)) { 
-			// Уязвимость -> LOGIN:: может быть введено пользователем вручную
-			// Как вариант можно отправлять хешируемое значение для логирования
-			static int count = 0;
-			if((count = add_client(clnt, from_addr)) <= TOTALCLIENTS) {
-				// Клиента добавляем в массив
-				clnt.addr[count] = from_addr;
-				// Отправляем контрольный бит
-				sendto(conn.socket, "1", 1, 0, (struct sockaddr*)&from_addr, addrlen);
-				count++;
-			}
-			continue;
-		}
-		char * istr;
-		if((istr = strstr(incoming, ": ::name"))) {
-			int ind = (int)(istr - incoming);
-			char log[ind];
-			strncpy(log, incoming, ind);
-			printf("%s\n", log);
-			continue;
-		}
-		if(strstr(incoming, ": ::exit")) {
-			printf("%s\n", incoming);
-			continue;
-		}
-
-		send_to_clients(conn, clnt, from_addr, addrlen);
-	} while(1);
-	close(conn.socket);
-	return 0;
-}
-
-// Низкоуровневая ф-ция вывода, нужна для вывода без буферизации
-void printub(const char *str) {
-	write(1, str, getsize(str));
-}
-
-// Чтоб не передавать параметр размера в функцию;
-// у указателя размер всегда равен 4 / 8 байтам,
-// а нужен реальный размер массива 
-int getsize(const char *str) {
-	int len = 0;
-	while(str[len]) len++;
-	return len;
-}
-
-void remove_nl(char *str) {
-	str[getsize(str) - 1] = '\0';
-}
-
-void multistrcat(char *str, ...) {
-	va_list args;
-    va_start(args, str);
-	bzero(str, getsize(str));
-	char *s_arg;
-	while (strcmp(s_arg = va_arg(args, char *), "\0")) {
-		strcat(str, s_arg);
-    }
-	va_end(args);
-}
-
-// Изменить на sigaction
-void sig_alarm(int sig) {
-	printub("Alarm::socket didn\'t get any response\n");
-	exit(1);
-}
-
-void sig_int(int sig) {
-	char notify[SMALLMESSAGESSIZE];
-	// multistrcat(notify, "\t\t", user.login, " leave this chat\n", "\0");
-	// send_message_to(conn, notify);
-	exit(0);
-}
-
-void sig_stub(int sig) {
-	exit(0);
-}
-
-void sigaction_init(int sig, void handler()) {
-	struct sigaction act;
-	memset(&act, 0, sizeof(act));
+	sigaction_init(SIGALRM, handler.sig_alarm);
+	sigaction_init(SIGINT, close_connection);
 	
-	sigset_t set;
-	sigemptyset(&set);
-	sigaddset(&set, sig);
-	act.sa_mask = set;
-	act.sa_handler = handler;
-	sigaction(sig, &act, 0);
-}
+	int current_clients_size = 0;
+	char incoming[BUFSIZE];
+	char outgoing[BUFSIZE];
+	struct sockaddr_in from_address;
+	socklen_t from_addrlen = sizeof(struct sockaddr_in);
 
-int sys_error(char * msg) {
-	perror(msg);
-	return(1);
-}
+	memset(server_buffer.zero, '\0', 30);
 
-int add_client(struct Clients clnt, struct sockaddr_in from_addr) {
-	int k = 0;
-	for(;k <= 10; k++) {
-		if(clnt.addr[k].sin_port == from_addr.sin_port) {
-			return 11;
-		} else if (!clnt.addr[k].sin_port) {
-			return k;
+	open_connection(&udp);
+
+	strcpy(server_buffer.type, "open");
+
+	// ...
+	printf("Server is working by PORT - %d\n\n", udp.port);
+	
+	do {
+		if(current_clients_size > MAXCLIENTSSIZE) {
+			// Достигнуто макс. кол-во клиентов
+			// Отослать уведомление
 		}
-	}
-	return 11; // Массив полон, клиентов добавлять нельзя
-}
 
-void send_to_clients(struct Connection conn, struct Clients clnt, struct sockaddr_in from_addr, socklen_t addrlen) {
-	int j = 0;
-	int total_message_size = 30;
-	for(;j <= TOTALCLIENTS && (clnt.addr[j].sin_port); j++) {
-		if(clnt.addr[j].sin_port == from_addr.sin_port) continue;
-		char message[total_message_size];
-		bzero(message, total_message_size);
-		// strcat(message, income);
-		if(sendto(conn.socket, message, sizeof(message), 0, (struct sockaddr*)&clnt.addr[j], addrlen) == -1) {
-			perror("not sent");
+		bzero(incoming, BUFSIZE);
+		bzero(outgoing, BUFSIZE);
+		bzero(&from_address, from_addrlen);
+		
+		recvfrom(udp.socket, incoming, BUFSIZE, 0, (struct sockaddr *)&from_address, &from_addrlen);
+		strcpy(client_buffer.type, ((struct ClientBuffer *)incoming)->type);
+		strcpy(client_buffer.login, ((struct ClientBuffer *)incoming)->login);
+		strcpy(client_buffer.message, ((struct ClientBuffer *)incoming)->message);
+
+		memdump(client_buffer.message, getsize(client_buffer.message));
+
+		if(!strcmp(client_buffer.type, "message")) {
+			sprintf(server_buffer.message, "%s: %s", client_buffer.login, client_buffer.message);
+			convert_to_string(&server_buffer, outgoing);
+			send_to_clients(udp.socket, clients, outgoing);
+			save_message(FILEMESSAGES, server_buffer.message);
+		} else if(!strcmp(client_buffer.type, "register")) {
+			printf("\n===REGISTRATION OF NEW CLIENT===\n\n");
+			// Создаем параллельный дочерний процесс для нового участника
+			if(fork() == 0) {
+				sigaction_init(SIGINT, handler.sig_stub);
+				// Регистрируем участника
+				printf("CONNECTION WITH %s (BY PORT - %d)\n\n", client_buffer.login, htons(from_address.sin_port));
+				
+				sprintf(server_buffer.message, "\nCONNECTION ESTABLISHED WITH PORT %d\n", htons(from_address.sin_port));
+				convert_to_string(&server_buffer, outgoing);
+				sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
+				
+				// Отправляем файл с предыдущими сообщениями
+				bzero(server_buffer.message, MSGSIZE);
+
+				load_messages(FILEMESSAGES, server_buffer.message);
+				convert_to_string(&server_buffer, outgoing);
+				sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
+
+				exit(0);
+			} // ------ fork end ------ //
+			sprintf(server_buffer.message, "\t\t%s JOIN THIS CHAT\n", client_buffer.login);
+			convert_to_string(&server_buffer, outgoing);
+			send_to_clients(udp.socket, clients, outgoing);
+
+			memcpy((void *)&(clients[current_clients_size].addr), (void *)&from_address, from_addrlen);
+			strcpy(clients[current_clients_size].login, client_buffer.login);
+
+			add_client(FILECLIENTS, &(clients[current_clients_size]));
+			load_clients(FILECLIENTS, clients);
+			current_clients_size++;
+		} else if(!strcmp(client_buffer.type, "close")) {
+			bzero(server_buffer.message, MSGSIZE);
+			sprintf(server_buffer.message, "\t\t%s LEAVE THIS CHAT\n", client_buffer.login);
+			convert_to_string(&server_buffer, outgoing);
+			send_to_clients(udp.socket, clients, outgoing);
+			
+			int desc = open(FILECLIENTS, O_TRUNC | O_RDONLY);
+			close(desc);
+
+			int i = 0;
+			while(clients[i].addr.sin_port) {
+				if(clients[i].addr.sin_port == from_address.sin_port) {
+					printf("Removing port %d\n", htons(from_address.sin_port));
+				} else {
+					add_client(FILECLIENTS, &(clients[i]));
+				}
+				i++;
+			}
+			memset(clients, '\0', sizeof(struct Clients) * MAXCLIENTSSIZE);
+			load_clients(FILECLIENTS, clients);
+			current_clients_size--;
+		} else if(!strcmp(client_buffer.type, "command")) {
+			strcpy(client_buffer.command, ((struct ClientBuffer *)incoming)->command);
+			strcpy(client_buffer.to_login, ((struct ClientBuffer *)incoming)->to_login);
+			remove_nl(client_buffer.to_login);
+			int p = 0;
+			while(clients[p].addr.sin_port) {
+				if(!strcmp(clients[p].login, client_buffer.to_login)) {
+					sprintf(server_buffer.message, "%s (ONLY FOR YOU): %s", client_buffer.login, client_buffer.message);
+					convert_to_string(&server_buffer, outgoing);
+					sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&clients[p].addr, sizeof(struct sockaddr));
+					break;
+				}
+				p++;
+			}
+			bzero(server_buffer.message, MSGSIZE);
+			sprintf(server_buffer.message, "%s (ONLY FOR %s): %s", client_buffer.login, client_buffer.to_login, client_buffer.message);
+			convert_to_string(&server_buffer, outgoing);
+			sendto(udp.socket, outgoing, BUFSIZE, 0, (struct sockaddr *)&from_address, from_addrlen);
+		} else {
+			printf("NO MATCH TYPE IN BUFFER\n");
 		}
+
+	} while(1);
+
+	shutdown(udp.socket, SHUT_RDWR);
+
+    return 0;
+}
+
+void open_connection(struct Connection *conn) {
+	struct sockaddr_in host_address;
+	conn->socket = socket(FAM, SOCK, 0);
+	int opt = 1;
+	setsockopt(conn->socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	
+	if(conn->socket == -1) {
+		handler.sys_error("Failed socket connection");
+	}
+	host_address.sin_family = FAM;
+	host_address.sin_port = htons(conn->port);
+	host_address.sin_addr.s_addr = INADDR_ANY;
+	memset(&(host_address.sin_zero), '\0', 8);
+	// if(!inet_aton(conn->host, &(host_address.sin_addr))) {
+	// 	handler.sys_error("Invalid address");
+	// }
+	if(bind(conn->socket, (struct sockaddr *)&(host_address), sizeof(host_address)) == -1) {
+		handler.sys_error("Failed bind UDP connection");
 	}
 }
 
+void close_connection() {
+	// Если сервер отключился, отправить сообщение всем клиентам
+	// и инициировать у них отключение и повторное подключение
+	char notify[BUFSIZE];
+	strcpy(server_buffer.type, "close");
+	strcpy(server_buffer.message, "\t\tCONNECTION CLOSED\n");
+	convert_to_string(&server_buffer, notify);
+	send_to_clients(udp.socket, clients, notify);
+
+	int desc;
+  	desc = open(FILECLIENTS, O_TRUNC | O_RDONLY);
+	close(desc);
+  	desc = open(FILEMESSAGES, O_TRUNC | O_RDONLY);
+	close(desc);
+
+	shutdown(udp.socket, SHUT_RDWR);
+
+	handler.sig_int(SIGINT);
+}
+
+void save_message(const char *filename, const char *messages) {
+	static int lines = 1;
+	// Сохранять только последние 10 сообщений
+	FILE *fm = fopen(filename, "a");
+	flock(fileno(fm), LOCK_SH);
+	if(fm == NULL) {
+		handler.sys_error("File");
+	}
+	if(lines > 10) {
+		// Удалять первое сообщение
+		fseek(fm, 0, SEEK_SET);
+		fseek(fm, 0, SEEK_END);
+	}
+	fputs(messages, fm);
+	lines++;
+	flock(fileno(fm), LOCK_UN);
+    fclose(fm);
+}
+
+void load_messages(const char *filename, char *outgoing) {
+	FILE *fm = fopen(filename, "r");
+	if(fm == NULL) {
+		handler.sys_error("File");
+	}
+	char message[MSGSIZE];
+	while(!feof(fm) && fgets(message, MSGSIZE, fm)) {
+		strcat(outgoing, message);
+	}
+}
+
+void add_client(const char *filename, struct Clients *client) {
+	char *c;
+	FILE *fc = fopen(filename, "ab");
+	flock(fileno(fc), LOCK_SH);
+	if(fc == NULL) {
+		handler.sys_error("File");
+	}
+	c = (char *)client;
+    // посимвольно записываем в файл структуру
+    for (int i = 0; i < sizeof(struct Clients); i++) {
+        putc(*c++, fc);
+    }
+	flock(fileno(fc), LOCK_UN);
+    fclose(fc);
+}
+
+void load_clients(const char *filename, struct Clients clients[]) {
+    char *c;
+    int sym;
+    FILE *fc = fopen(filename, "rb");
+	if(fc == NULL) {
+		handler.sys_error("File");
+	}
+    c = (char *)clients;
+    while ((sym = getc(fc)) != EOF) {
+        *c = sym;
+        c++;
+    }
+    fclose(fc);
+}
+
+void send_to_clients(int socket, struct Clients clients[], const char message[]) {
+	int p = 0;
+	printf("SEND MESSAGE TO:\n");
+	while(clients[p].addr.sin_port) {
+		printf("%d) %d\n", p, htons(clients[p].addr.sin_port));
+		sendto(socket, message, BUFSIZE, 0, (struct sockaddr *)&clients[p].addr, sizeof(struct sockaddr));
+		p++;
+	}
+	printf("\n");
+}
+
+void convert_to_string(void *struct_buffer, char string[]) {
+	char *c;
+	c = (char *)struct_buffer;
+	// посимвольно записываем структуру в сообщение
+	for (int i = 0; i < BUFSIZE; i++) {
+		memset(string++, *(c++), 1);
+	}
+}
+
+// Выводит дамп памяти в формате HEX
+void memdump(const char buffer[], const int size) {
+	printf("RECIEVED %d BYTES:\n", size);
+	unsigned char byte; 
+	unsigned int i, j;
+	for(i = 0; i < size; i++) {
+		printf("%02x ", buffer[i]); // Отображаем
+		
+		if(((i % 16) == 15) || (i == size - 1)) {
+			for(j = 0; j < 15 - (i % 16); j++) {
+				printf("   ");
+			}
+			printf("| ");
+			for(j = (i - (i % 16)); j <= i; j++) {
+				byte = buffer[j];
+				if((byte > 31) && (byte < 127)) {
+					printf("%c", byte);
+				} else {
+					printf(".");
+				}
+			}
+			printf("\n");
+		} // ------ if end ------ //
+	} // ------ for end ------ //
+}
