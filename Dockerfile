@@ -13,4 +13,4 @@ COPY / /CLC
 
 EXPOSE 7654
 
-ENTRYPOINT [ "make clean", "./start"]
+CMD "./start"
