@@ -95,7 +95,8 @@ int main() {
 			
 			if(!strcmp(server_buffer.type, "open")) {
 				printub(server_buffer.message);
-			} else if(!strcmp(server_buffer.type, "close")) {
+			} else 
+			if(!strcmp(server_buffer.type, "close")) {
 				printub(server_buffer.message);
 				kill(getppid(), SIGINT);
 				kill(getpid(), SIGINT);
@@ -120,7 +121,8 @@ int main() {
 			strcpy(client_buffer.message, reading);
 			convert_to_string(&client_buffer, outgoing, BUFSIZE);
 			write(udp.socket, outgoing, BUFSIZE);
-		} else if(!strncmp(reading, "all:", 4)) {
+		} else 
+		if(!strncmp(reading, "all:", 4)) {
 			strcpy(client_buffer.type, "message");
 		} else {
 			strcpy(client_buffer.message, reading);

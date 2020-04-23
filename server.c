@@ -83,7 +83,8 @@ int main() {
 			convert_to_string(&server_buffer, outgoing);
 			send_to_clients(udp.socket, clients, outgoing);
 			save_message(FILEMESSAGES, server_buffer.message);
-		} else if(!strcmp(client_buffer.type, "register")) {
+		} else 
+		if(!strcmp(client_buffer.type, "register")) {
 			printf("\n===REGISTRATION OF NEW CLIENT===\n\n");
 			// Создаем параллельный дочерний процесс для нового участника
 			if(fork() == 0) {
@@ -114,7 +115,8 @@ int main() {
 			add_client(FILECLIENTS, &(clients[current_clients_size]));
 			load_clients(FILECLIENTS, clients);
 			current_clients_size++;
-		} else if(!strcmp(client_buffer.type, "close")) {
+		} else 
+		if(!strcmp(client_buffer.type, "close")) {
 			bzero(server_buffer.message, MSGSIZE);
 			sprintf(server_buffer.message, "\t\t%s LEAVE THIS CHAT\n", client_buffer.login);
 			convert_to_string(&server_buffer, outgoing);
@@ -135,7 +137,8 @@ int main() {
 			memset(clients, '\0', sizeof(struct Clients) * MAXCLIENTSSIZE);
 			load_clients(FILECLIENTS, clients);
 			current_clients_size--;
-		} else if(!strcmp(client_buffer.type, "command")) {
+		} else 
+		if(!strcmp(client_buffer.type, "command")) {
 			strcpy(client_buffer.command, ((struct ClientBuffer *)incoming)->command);
 			strcpy(client_buffer.to_login, ((struct ClientBuffer *)incoming)->to_login);
 			remove_nl(client_buffer.to_login);
